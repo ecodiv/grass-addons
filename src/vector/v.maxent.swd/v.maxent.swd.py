@@ -378,6 +378,7 @@ def main(options, flags):
             raster_extension = "asc"
         if len(evp) > 0:
             for idx, name in enumerate(evp):
+                gs.message(_("Exporting {} ...".format(name)))
                 exporturl = os.path.join(
                     options["export_rasters"], f"{evpn[idx]}.{raster_extension}"
                 )

@@ -267,10 +267,19 @@ By default the multi-panel plot is shown in an interactive window. If **output**
 is given, the plot is instead saved to that file and the image format is taken
 from the file extension (`.png`, `.pdf`, `.svg`, ...). Plot appearance is
 controlled by **dpi** (resolution, default 300) and **plot_dimensions**
-(width,height in inches, default 8,8). The **style** option applies a
+(width,height in inches). The **style** option applies a
 Matplotlib [style
 sheet](https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html)
 to the plot, e.g. *style=ggplot*.
+
+The **plots** option selects which of the four panels (observed, trend,
+seasonal, residual) are drawn. By default all four are shown; list a subset to
+leave the others out, for example *plots=observed,trend* to draw only the
+observed series and its trend. At least one panel is required. The trend
+regression lines (**-o**, **-s**, **-g**) are only drawn when the trend panel is
+included. When **plot_dimensions** is not set, the default figure height scales
+with the number of selected panels (about 2 inches each, so the full four-panel
+figure is 8x8 inches).
 
 The **backend** option selects the matplotlib rendering backend. You rarely need
 it: `Agg` is chosen automatically when writing to a file, and `WXAgg` (an

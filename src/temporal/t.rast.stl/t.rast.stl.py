@@ -313,6 +313,18 @@
 # %end
 
 # %option
+# % key: plots
+# % type: string
+# % label: Panels to include in the figure
+# % description: Which decomposition panels to draw, as a comma separated subset of observed, trend, seasonal and residual. Omitted panels are left out of the figure; at least one panel is required. The trend regression lines are only drawn when the trend panel is included.
+# % options: observed,trend,seasonal,residual
+# % multiple: yes
+# % answer: observed,trend,seasonal,residual
+# % required: no
+# % guisection: Output
+# %end
+
+# %option
 # % key: style
 # % type: string
 # % label: Matplotlib style
@@ -1679,6 +1691,7 @@ def plot_result(
     fontsize=None,
     line_width=None,
     title=None,
+    plots=None,
 ):
     """Build the multi-panel STL plot, in the style of R's plot(stl(...)).
 
@@ -1714,6 +1727,9 @@ def plot_result(
         from GRASS colour syntax). Defaults to a blue.
     :param line_color2: series line colour for the second dataset. Defaults to
         an orange.
+    :param list|None plots: which panels to draw, as a subset of 'observed',
+        'trend', 'seasonal' and 'residual'. None (or all four) draws the full
+        four-panel figure.
     """
     have_second = result2 is not None
     # Series line colours: user-supplied or sensible defaults.
@@ -1734,13 +1750,25 @@ def plot_result(
     if fontsize is not None:
         plt.rcParams["font.size"] = fontsize
     legend_fontsize = fontsize * 0.9 if fontsize is not None else "small"
-    fig, axes = plt.subplots(4, 1, figsize=dimensions, sharex=True)
-    panels = [
+    all_panels = [
         ("Observed", result.observed, result2.observed if have_second else None),
         ("Trend", result.trend, result2.trend if have_second else None),
         ("Seasonal", result.seasonal, result2.seasonal if have_second else None),
         ("Residual", result.resid, result2.resid if have_second else None),
     ]
+    # Keep only the requested panels, preserving the canonical top-to-bottom
+    # order. An empty/None selection falls back to all four panels.
+    if plots:
+        selected = {p.lower() for p in plots}
+        panels = [p for p in all_panels if p[0].lower() in selected]
+    else:
+        panels = all_panels
+    # squeeze=False keeps 'axes' 2-D so a single-panel figure indexes the same
+    # way as a multi-panel one.
+    fig, axes = plt.subplots(
+        len(panels), 1, figsize=dimensions, sharex=True, squeeze=False
+    )
+    axes = axes[:, 0]
     # Colour the primary series when a second dataset is present or the user
     # supplied a custom colour; otherwise keep matplotlib's default so a plain
     # single-dataset plot looks unchanged.
@@ -1836,9 +1864,13 @@ def plot_result(
         ax.set_ylabel(label)
         ax.margins(x=0.01)
 
-    # A single legend identifying the two datasets, on the Observed panel.
+    # A single legend identifying the two datasets, on the Observed panel when
+    # it is drawn, otherwise on the first panel.
     if have_second:
-        observed_ax = axes[0]
+        observed_ax = next(
+            (ax for ax, (label, *_) in zip(axes, panels) if label == "Observed"),
+            axes[0],
+        )
         line1 = mpl.lines.Line2D([], [], color=color1, linewidth=1, label=label1)
         line2 = mpl.lines.Line2D([], [], color=color2, linewidth=1, label=label2)
         observed_ax.legend(
@@ -1920,6 +1952,15 @@ def validate_options(options, flags, temporal_type):
         gs.fatal(
             _("The '{}' interpolation method requires the 'order' option.").format(
                 options["interpolation"]
+            )
+        )
+
+    # At least one panel must be kept in the figure.
+    if not [p for p in options["plots"].split(",") if p]:
+        gs.fatal(
+            _(
+                "At least one panel must be selected in the 'plots' option "
+                "(observed, trend, seasonal and/or residual)."
             )
         )
 
@@ -2195,6 +2236,7 @@ def main(options, flags):
     csv = options["csv"]
     vector = options["vector"]
     plot_dimensions = options["plot_dimensions"]
+    plots = [p for p in options["plots"].split(",") if p] if options["plots"] else []
     dpi = float(options["dpi"]) if options["dpi"] else 300
 
     robust = flags["r"]
@@ -2342,7 +2384,10 @@ def main(options, flags):
     if plot_dimensions:
         dimensions = [float(x) for x in plot_dimensions.split(",")]
     else:
-        dimensions = [8, 8]
+        # Default height scales with the number of panels (2 inches each), so
+        # the full four-panel figure stays 8x8 while smaller selections are not
+        # stretched vertically.
+        dimensions = [8, 2 * len(plots)]
     plot_result(
         result=result,
         output=output,
@@ -2367,6 +2412,7 @@ def main(options, flags):
         fontsize=fontsize,
         line_width=line_width,
         title=title,
+        plots=plots,
     )
 
 

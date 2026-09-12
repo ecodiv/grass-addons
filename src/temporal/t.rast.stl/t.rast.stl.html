@@ -313,7 +313,17 @@ By default the multi-panel plot is shown in an interactive window. If
 <b>output</b> is given, the plot is instead saved to that file and the image
 format is taken from the file extension (<tt>.png</tt>, <tt>.pdf</tt>,
 <tt>.svg</tt>, ...). Plot appearance is controlled by <b>dpi</b> (resolution,
-default 300) and <b>plot_dimensions</b> (width,height in inches, default 8,8).
+default 300) and <b>plot_dimensions</b> (width,height in inches).
+
+<p>
+The <b>plots</b> option selects which of the four panels (observed, trend,
+seasonal, residual) are drawn. By default all four are shown; list a subset to
+leave the others out, for example <i>plots=observed,trend</i> to draw only the
+observed series and its trend. At least one panel is required. The trend
+regression lines (<b>-o</b>, <b>-s</b>, <b>-g</b>) are only drawn when the trend
+panel is included. When <b>plot_dimensions</b> is not set, the default figure
+height scales with the number of selected panels (about 2 inches each, so the
+full four-panel figure is 8x8 inches).
 
 <p>
 The <b>backend</b> option selects the matplotlib rendering backend. You rarely

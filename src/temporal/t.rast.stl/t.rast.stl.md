@@ -1,19 +1,20 @@
 ## DESCRIPTION
 
-*t.rast.stl* extracts the time series of a single user-selected point from a
-space-time raster dataset (strds), runs an **STL decomposition** (Seasonal-Trend
-decomposition using LOESS) on it, and produces a multi-panel plot of the
-observed series together with its *trend*, *seasonal* and *residual* (remainder)
-components. Optionally, one or more trend regressions are fitted to the
-deseasonalized series and drawn on the trend panel: an ordinary least-squares
-(OLS) line, a robust Theil-Sen line, and/or a shape-constrained (monotone)
-Generalized Additive Model (GAM) curve.
+t.rast.stl extracts a time series from a space-time raster dataset (STRDS),
+either at a single user-selected point or as the mean or median value within a
+user-selected area. Next, it carries out a **STL decomposition** (Seasonal-Trend
+decomposition using LOESS) and produces a multi-panel plot of the observed
+series together with its *trend*, *seasonal* and *residual* (remainder)
+components. Optionally, one or more trend regressions can be fitted to the
+deseasonalized series and drawn on the trend panel, including an ordinary
+least-squares (OLS) line, a robust Theil-Sen line, and/or a shape-constrained
+(monotone) Generalized Additive Model (GAM) curve.
 
-The module is a standalone tool that works on any strds, with either absolute
-(calendar-dated) or relative (integer-stepped) time. Internally it uses
-*[t.rast.what](t.rast.what.md)* to sample the pixel value at every registered
-timestep, regularizes the resulting irregular series onto an evenly spaced time
-axis (a hard requirement of STL), and then runs
+The module strds with absolute (calendar-dated) or relative (integer-stepped)
+time. For a point (**coordinates**) it samples the pixel value at every
+registered timestep. For an area (**zone**) it takes the average or median value
+of all the pixels in the zone. The resulting series is regularized onto an
+evenly, user-defined, spaced time axis, and then run through
 [statsmodels.tsa.seasonal.STL](https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html).
 
 ### About STL
@@ -22,33 +23,22 @@ Environmental time series derived from remote sensing, like a vegetation index,
 land surface temperature, snow cover, or soil moisture, are normally composed
 of:
 
-- a repeating **seasonal** pattern, e.g. vegetation greening up every spring and
+- A repeating **seasonal** pattern, e.g. vegetation greening up every spring and
   senescing every autumn;
-- a slower **trend**, e.g. a multi-year changes such as recovery after a
+- A slower **trend**, e.g. a multi-year changes such as recovery after a
   disturbance, or climate change;
-- short-term **residual** variation that is left over once season and trend are
-  removed. This can be noise from weather, sensor noise, residual cloud
-  contamination, or one-off events such as a fire or a flood.
+- Short-term **residual** variation that is left over once season and trend are
+  removed. These include normal day-to-day variation, sensor noise, residual
+  cloud contamination, or one-off events such as a fire or a flood.
 
 STL is a procedure that separates these three temporal patterns. It models the
-observed value at each date as
-
-```text
-observed = trend + seasonal + residual
-```
+observed value at each date as `observed = trend + seasonal + residual`.
 
 It estimates the trend and seasonal patterns by repeatedly fitting **LOESS**
 (LOcally Estimated Scatterplot Smoothing) curves. These are flexible local
-regressions that follow the data without assuming a fixed global functional
-shape. STL is robust, handles long seasonal cycles, and (in its robust variant)
-can down-weight outliers such as undetected clouds.
-
-Once decomposed, each component answers a different question. The **seasonal**
-panel shows the typical within-year cycle; the **trend** panel shows where the
-system is heading once seasonality is removed and the **residual** panel
-highlights dates that depart from the expected season-plus-trend behaviour.
-These include normal day-to-day variation, but could also be used to flag
-anomalies.
+regressions that do not assume a fixed global functional shape. STL is robust,
+handles long seasonal cycles, and (in its robust variant) can down-weight
+outliers such as undetected clouds.
 
 The module can be run with default settings to explore patterns. The minimum
 input is the strds and point coordinates. If the maps in the strds are not
@@ -56,7 +46,10 @@ regularly spaced, you will need to provide the required frequency as well. For
 more information about this parameter and other fine-tune options, see the next
 section.
 
-### Point selection
+### Sampling area
+
+The series is sampled either at a single point (**coordinates**) or pooled over
+an area (**zone**). These two options are mutually exclusive.
 
 The point is given with **coordinates=east,north** in the coordinate system of
 the current GRASS project. When the module dialog is launched from within the
@@ -64,16 +57,31 @@ GRASS GUI, the coordinates field can also be filled by clicking a location in
 the map display (when launched from the terminal, clicking a location will not
 work).
 
-The module samples the value at the point in the *current computational
-region*'s resolution. Set the region with *[g.region](g.region.md)* before
-running if needed. The point must fall inside the current region.
+**zone** is a vector map (points, lines or polygons) defining the sampling area.
+All of its features are rasterized and pooled into a single sample. So there is
+no per-feature breakdown. Use *[v.extract](v.extract.md)* beforehand to
+pre-select a subset of features if the map contains more than you want pooled
+together.
+
+Either way, the module samples the *current computational region*'s
+resolution. Set the region with *[g.region](g.region.md)* before running if
+needed. The point, or at least part of the zone, must fall inside the current
+region.
+
+With **zone**, the per-timestep pixel values within the area are summarized by
+**statistic**: `mean` (the default) or `median`. Note that the `median` option
+requires t.rast.univar's extended-statistics mode, which can require a lot of
+memory if used with large rasters. The **-d** flag additionally shades a band
+around the Observed series showing the spread of pixel values at each timestep:
+±1 standard deviation for `mean`, or the interquartile range (25th-75th
+percentile) for `median`. 
 
 ### Comparing two datasets
 
 A second space-time raster dataset can be supplied with **strds2**. When given,
 the full analysis (regularization, STL decomposition and trend regression) is
 run on both datasets and the two are drawn together on the same four panels
-(Observed, Trend, Seasonal, Residual). By default the first dataset is plotted
+(Observed, Trend, Seasonal, Residual). By default, the first dataset is plotted
 against the left y-axis and the second against its own twin right y-axis on each
 panel, so two quantities with very different units or ranges (for example
 temperature and precipitation) can be compared on a shared time axis. The two
@@ -82,10 +90,10 @@ match and a single legend in the Observed panel naming each dataset.
 
 The trend regression lines requested with **-o**, **-s** and **-g** are drawn on
 the Trend panel for both datasets. Each dataset's regression lines use a colour
-family matching its series, while the line style identifies the regression type
-(OLS dashed, Theil-Sen dash-dot, GAM dotted). The **-t** flag adds the
-slope/R²/*p* statistics to it. The full statistics for each dataset are always
-printed to the terminal regardless.
+family matching its series, while different line styles are used for the
+different regression types (OLS dashed, Theil-Sen dash-dot, GAM dotted). The
+**-t** flag adds the slope/R²/*p* statistics to it. The full statistics for each
+dataset are always printed to the terminal regardless.
 
 When the two datasets are in comparable units, the **-y** flag forces them onto
 a single common y-axis range per panel (instead of separate left/right axes), so
@@ -191,6 +199,18 @@ most exact.
 outliers. This is worth enabling when residual cloud or sensor spikes are
 distorting the fit.
 
+### Seasonal amplitude envelope
+
+The **-e** flag draws a rolling min/max of the seasonal component on the
+Seasonal panel: a moving window one seasonal **period** wide, centered on each
+point, tracks the local maximum and minimum of the seasonal cycle. It can be
+used to show a decrease or increase in the amplitude over time (for example, a
+vegetation index whose greening/senescence amplitude strengthens or dampens
+across years).
+
+With **csv**, the envelope is written as `seasonal_lower`/`seasonal_upper`
+columns.
+
 ### Trend lines
 
 Beyond the visual decomposition, the tool quantifies the long-term change by
@@ -238,10 +258,9 @@ per month, and so on.
 the Kendall test behind Theil-Sen) assume independent residuals. Deseasonalized
 environmental series are almost always serially autocorrelated, which inflates
 significance (*p*-values come out too small). The values here therefore do
-**not** account for serial autocorrelation; for formal inference, consider a
-trend-free pre-whitening of the series, or a variance correction such as the
-Hamed–Rao modification of the Mann-Kendall test, before drawing conclusions
-about significance.
+**not** account for serial autocorrelation. So, for a formal inference, you
+should consider a trend-free pre-whitening of the series, or a variance
+correction such as the Hamed–Rao modification of the Mann-Kendall test.
 
 The STL trend LOESS has to **extrapolate** at both ends of the series because,
 near the boundaries, it can only use data from one side. The corresponding ends
@@ -288,12 +307,19 @@ system needs a different interactive backend (e.g. `TkAgg`, `Qt5Agg`).
 
 The **csv** option additionally writes the observed, trend, seasonal and
 residual components per date, so they can be replotted or analysed in your
-software tool of choice.
+software tool of choice. With **zone** and **-d**, the dispersion band is
+included too: a `sd` column for `statistic=mean`, or `first_quartile`/
+`third_quartile` columns for `statistic=median`. With the **-e** flag, the
+seasonal amplitude envelope is included as `seasonal_lower`/`seasonal_upper`
+columns.
 
-The **vector** option creates a point vector layer at the selected location,
-carrying the trend regression results (OLS slope, R², *p*-value, Theil-Sen
-slope, Mann-Kendall tau and *p*-value) as attributes. When a monotone GAM was
-fitted (**-g**), its net change and explained deviance are stored as well.
+The **vector** option creates a point vector layer carrying the trend
+regression results (OLS slope, R², *p*-value, Theil-Sen slope, Mann-Kendall
+tau and *p*-value) as attributes. When a monotone GAM was fitted (**-g**), its
+net change and explained deviance are stored as well. With **coordinates**
+the point is at the selected location; with **zone** it is placed at the
+center of the zone's bounding box (a tag for the location, not a geometry
+derived from the zone itself).
 
 ### Subsetting and performance
 
@@ -301,9 +327,10 @@ The **where** option accepts a temporal WHERE clause (as used by other `t.*`
 modules) to restrict the analysis to a subset of timestamps, for example a
 particular range of years.
 
-The **nprocs** option sets the number of parallel processes used during sampling
-by *[t.rast.what](t.rast.what.md)*, potentially making the module substantially
-faster to run.
+The **nprocs** option sets the number of parallel processes used during
+sampling: by *[t.rast.what](t.rast.what.md)* for a point (**coordinates**), or
+by *[t.rast.univar](t.rast.univar.md)*'s zonal extraction for an area
+(**zone**), potentially making the module substantially faster to run.
 
 ## NOTES
 
@@ -317,9 +344,7 @@ pip install numpy pandas scipy matplotlib statsmodels
 If a dependency is missing the module exits with a message indicating which
 package to install. Exception is *pygam*, which is an optional dependency
 (`pip install pygam`). It is imported only when **-g** is used, so the rest of
-the module works without it.
-
-Computation depend on the following libraries:
+the module works without it. The following packages are required:
 
 - **pandas** builds the time-indexed series, resamples it onto the regular axis
   (`Series.resample`) and fills gaps (`Series.interpolate`).
@@ -453,6 +478,23 @@ series (`trend + residual`), so the confidence band reflects the genuine
 short-term scatter. Keep in mind that the reported *p*-values do not account for
 serial autocorrelation (see the trend regression section above).
 
+### Sample over an area instead of a point
+
+Instead of a single point, pass a vector map with **zone** to pool pixels over
+an area. For example, a county boundary polygon:
+
+```sh
+t.rast.stl strds=tempmean zone=county_boundary -d output=t_rast_stl_zone.png
+```
+
+This decomposes the mean temperature across the whole polygon, and (with
+**-d**) shades a ±1 SD band on the Observed panel showing how much the pixel
+values within the county varied at each timestep. For a statistic more
+resistant to outlier pixels, use `statistic=median` instead (the **-d** band
+then becomes the interquartile range); keep in mind this requires
+t.rast.univar's extended-statistics mode, which is more memory-intensive on
+large rasters than the `mean` default.
+
 ### Compare two datasets
 
 Supply a second strds with **strds2** to decompose and analyze it alongside the
@@ -504,14 +546,18 @@ shared y-axis.
 - Dasari, N. (2025b). Time Series Forecasting Made Simple (Part 2): Customizing
   Baseline Models. *Towards Data Science*
   [Part II article](https://towardsdatascience.com/time-series-forecasting-made-simple-part-2-customizing-baseline-models/).
-- Local regression. (2026). In *Wikipedia*
-  [Wikipedia local regression article](https://en.wikipedia.org/wiki/Local_regression).
-- statsmodels. (2025). *Statsmodels* (Version 0.14.6) [Python]
-  [statsmodels repository](https://github.com/statsmodels/statsmodels/).
-- Servén, D., & Brummitt, C. (2018). pyGAM: Generalized Additive Models in
-  Python. *Zenodo*. [pyGAM documentation](https://pygam.readthedocs.io/).
 - Hamed, K. H., & Rao, A. R. (1998). A modified Mann-Kendall trend test for
   autocorrelated data. *Journal of Hydrology*, 204(1–4), 182–196.
+- Local regression. (2026). In *Wikipedia*
+  [Wikipedia local regression article](https://en.wikipedia.org/wiki/Local_regression).
+- Seabold, S., & Perktold, J. (2010). Statsmodels: Econometric and Statistical
+  Modeling with Python. SciPy 2010. https://doi.org/10.25080/Majora-92bf1922-011
+- Servén, D., & Brummitt, C. (2018). pyGAM: Generalized Additive Models in
+  Python. *Zenodo*. [pyGAM documentation](https://pygam.readthedocs.io/).
+- statsmodels. (2025). *Statsmodels* (Version 0.14.6) [Python]
+  [statsmodels repository](https://github.com/statsmodels/statsmodels/).
+- Virtanen, P., Gommers, R., Oliphant, T. E., Haberland, M., Reddy, T., Cournapeau, D., Burovski, E., Peterson, P., Weckesser, W., Bright, J., Van Der Walt, S. J., Brett, M., Wilson, J., Millman, K. J., Mayorov, N., Nelson, A. R. J., Jones, E., Kern, R., Larson, E., … Vázquez-Baeza, Y. (2020). SciPy 1.0: Fundamental algorithms for scientific computing in Python. Nature Methods, 17(3), 261–272. https://doi.org/10.1038/s41592-019-0686-2
+
 
 ## AUTHOR
 

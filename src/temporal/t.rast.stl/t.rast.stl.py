@@ -41,9 +41,28 @@
 # %end
 
 # %option G_OPT_M_COORDS
-# % required: yes
+# % required: no
 # % label: Point coordinates (east,north)
-# % description: Comma separated pair of map coordinates of the point to extract. In the GUI (launched from a Map Display) the value can be filled by clicking in the display.
+# % description: Comma separated pair of map coordinates of the point to extract. In the GUI (launched from a Map Display) the value can be filled by clicking in the display. Mutually exclusive with 'zone'.
+# % guisection: Input
+# %end
+
+# %option G_OPT_V_INPUT
+# % key: zone
+# % required: no
+# % label: Vector map defining the sampling area
+# % description: Vector map (points, lines or polygons) defining the sampling area. All features in the map are rasterized and pooled into a single sample; use v.extract beforehand to pre-select a subset of features. Mutually exclusive with 'coordinates'.
+# % guisection: Input
+# %end
+
+# %option
+# % key: statistic
+# % type: string
+# % label: Pixel aggregation statistic
+# % description: Statistic used to summarize the pixels within 'zone' at each timestep. 'mean' uses a single, cheap t.rast.univar call. 'median' is more robust to outlier/contaminated pixels but requires t.rast.univar's extended-statistics mode, which sorts all cell values in memory for each map; this is a real memory cost on very large rasters.
+# % options: mean,median
+# % answer: mean
+# % required: no
 # % guisection: Input
 # %end
 
@@ -259,6 +278,95 @@
 # % guisection: STL
 # %end
 
+# %option
+# % key: plots
+# % type: string
+# % label: Panels to include in the figure
+# % description: Which decomposition panels to draw, as a comma separated subset of observed, trend, seasonal and residual. Omitted panels are left out of the figure; at least one panel is required. The trend regression lines are only drawn when the trend panel is included.
+# % options: observed,trend,seasonal,residual
+# % multiple: yes
+# % answer: observed,trend,seasonal,residual
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: style
+# % type: string
+# % label: Matplotlib style
+# % description: Matplotlib style sheet, see https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: fontsize
+# % type: double
+# % label: Font size
+# % description: Base font size of plot text. Defaults to the Matplotlib/style default.
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: line_width
+# % type: double
+# % label: Line width
+# % description: Width of the series lines. Defaults to the Matplotlib default.
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: title
+# % type: string
+# % label: Plot title
+# % description: The title of the plot. If left empty, no title is drawn.
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %flag
+# % key: y
+# % label: Use a common y-axis scale for both datasets
+# % description: When two datasets are plotted, force both to share the same y-axis range on each panel instead of giving 'strds2' its own (right) axis. Only meaningful with strds2; most useful when the two datasets are in comparable units.
+# % guisection: Plotting
+# %end
+
+# %flag
+# % key: d
+# % label: Show pixel-value spread band
+# % description: Shade a band around the Observed series showing the spread of pixel values within 'zone' at each timestep: +/-1 standard deviation for the 'mean' statistic, or the interquartile range (25th-75th percentile) for the 'median' statistic. Only meaningful with 'zone'.
+# % guisection: Plotting
+# %end
+
+# %flag
+# % key: e
+# % label: Show seasonal amplitude envelope
+# % description: Draw the rolling min/max of the seasonal component (a centered window one seasonal period wide) on the Seasonal panel, showing how the seasonal amplitude changes over time. Independent of 'coordinates'/'zone'.
+# % guisection: Plotting
+# %end
+
+# %option G_OPT_CN
+# % key: color
+# % type: string
+# % label: Line color for the first dataset
+# % description: Color of the 'strds' series lines. Accepts a GRASS color name (e.g. 'blue'), an R:G:B triplet (e.g. '0:0:255'), or any matplotlib color such as a hex code ('#1f77b4') or 'tab:' name. The trend-regression lines for this dataset are drawn in a matching darker/lighter family. Defaults to the Matplotlib default.
+# % required: no
+# % answer:
+# % guisection: Plotting
+# %end
+
+# %option G_OPT_CN
+# % key: color2
+# % type: string
+# % label: Line color for the second dataset
+# % description: Color of the 'strds2' series lines. Accepts a GRASS color name, an R:G:B triplet, or any matplotlib color (hex code or 'tab:' name). Used only when strds2 is given. Its trend-regression lines use a matching family. Defaults to the Matplotlib default.
+# % required: no
+# % answer:
+# % guisection: Plotting
+# %end
+
 # %option G_OPT_F_OUTPUT
 # % key: output
 # % required: no
@@ -312,88 +420,18 @@
 # % guisection: Output
 # %end
 
-# %option
-# % key: plots
-# % type: string
-# % label: Panels to include in the figure
-# % description: Which decomposition panels to draw, as a comma separated subset of observed, trend, seasonal and residual. Omitted panels are left out of the figure; at least one panel is required. The trend regression lines are only drawn when the trend panel is included.
-# % options: observed,trend,seasonal,residual
-# % multiple: yes
-# % answer: observed,trend,seasonal,residual
-# % required: no
-# % guisection: Output
-# %end
-
-# %option
-# % key: style
-# % type: string
-# % label: Matplotlib style
-# % description: Matplotlib style sheet, see https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html
-# % required: no
-# % guisection: Output
-# %end
-
-# %option
-# % key: fontsize
-# % type: double
-# % label: Font size
-# % description: Base font size of plot text. Defaults to the Matplotlib/style default.
-# % required: no
-# % guisection: Output
-# %end
-
-# %option
-# % key: line_width
-# % type: double
-# % label: Line width
-# % description: Width of the series lines. Defaults to the Matplotlib default.
-# % required: no
-# % guisection: Output
-# %end
-
-# %option
-# % key: title
-# % type: string
-# % label: Plot title
-# % description: The title of the plot. If left empty, no title is drawn.
-# % required: no
-# % guisection: Aesthetics
-# %end
-
-# %flag
-# % key: y
-# % label: Use a common y-axis scale for both datasets
-# % description: When two datasets are plotted, force both to share the same y-axis range on each panel instead of giving 'strds2' its own (right) axis. Only meaningful with strds2; most useful when the two datasets are in comparable units.
-# % guisection: Optional
-# %end
-
-# %option G_OPT_CN
-# % key: color
-# % type: string
-# % label: Line color for the first dataset
-# % description: Color of the 'strds' series lines. Accepts a GRASS color name (e.g. 'blue'), an R:G:B triplet (e.g. '0:0:255'), or any matplotlib color such as a hex code ('#1f77b4') or 'tab:' name. The trend-regression lines for this dataset are drawn in a matching darker/lighter family. Defaults to the Matplotlib default.
-# % required: no
-# % answer:
-# % guisection: Optional
-# %end
-
-# %option G_OPT_CN
-# % key: color2
-# % type: string
-# % label: Line color for the second dataset
-# % description: Color of the 'strds2' series lines. Accepts a GRASS color name, an R:G:B triplet, or any matplotlib color (hex code or 'tab:' name). Used only when strds2 is given. Its trend-regression lines use a matching family. Defaults to the Matplotlib default.
-# % required: no
-# % answer:
-# % guisection: Optional
-# %end
 
 # %option G_OPT_M_NPROCS
+# % description: Number of parallel processes. For a point ('coordinates') this has no effect. For an area ('zone') it is forwarded to t.rast.univar's zonal extraction.
 # %end
 
 # %option G_OPT_T_WHERE
 # %end
 
 # %rules
+# % exclusive: coordinates, zone
+# % required: coordinates, zone
+# % requires: -d, zone
 # % requires: -b, -g
 # % requires: gam_direction, -g
 # % requires: -y, strds2
@@ -416,11 +454,18 @@ if not callable(globals().get("_")):
 # Directories created with gs.tempdir() during the run, removed by cleanup().
 clean_dirs = []
 
+# Raster maps (the zone raster) created during the run, removed by cleanup().
+clean_rasters = []
+
 
 def cleanup():
-    """Remove temporary directories registered during the run."""
+    """Remove temporary directories and rasters registered during the run."""
     for path in clean_dirs:
         gs.try_rmdir(path)
+    if clean_rasters:
+        gs.run_command(
+            "g.remove", flags="f", type="raster", name=clean_rasters, quiet=True
+        )
 
 
 def lazy_import_py_modules(backend="WXAgg"):
@@ -540,6 +585,107 @@ def coords_from_option(coordinates):
     return (east, north)
 
 
+def validate_zone(zone):
+    """Check that the zone= vector map exists.
+
+    :param str zone: name of the vector map (as given on the command line)
+    """
+    found = gs.find_file(name=zone, element="vector")
+    if not found.get("fullname"):
+        gs.fatal(_("Vector map '{}' not found.").format(zone))
+
+
+def make_zone_raster(zone):
+    """Rasterize zone= into a single-category zones raster for t.rast.univar.
+
+    All features in the vector, of any geometry type (point, line or area),
+    are burned to the same category value (1), so the strds is sampled as one
+    pooled zone regardless of how many features the vector has. The raster is
+    registered in ``clean_rasters`` for removal by cleanup().
+
+    Feature-type and emptiness are not checked beforehand: if the vector has
+    nothing that rasterizes into the current region (e.g. it falls outside
+    it), that shows up here as zero non-null cells and is fatal.
+
+    :param str zone: name of the input vector map
+    :return str: name of the created zones raster
+    """
+    zone_raster = gs.tempname(12)
+    try:
+        gs.run_command(
+            "v.to.rast",
+            input=zone,
+            output=zone_raster,
+            use="val",
+            value=1,
+            quiet=True,
+        )
+    except CalledModuleError:
+        gs.fatal(_("Could not rasterize the zone vector map '{}'.").format(zone))
+    clean_rasters.append(zone_raster)
+
+    stats = gs.parse_command("r.univar", flags="g", map=zone_raster)
+    if int(stats.get("n", 0)) == 0:
+        gs.fatal(
+            _(
+                "The zone vector map '{}' has no features that fall within "
+                "the current computational region; nothing to sample."
+            ).format(zone)
+        )
+    return zone_raster
+
+
+def zone_bbox_center(zone):
+    """Center of the zone vector map's bounding box, for messages/tagging only.
+
+    This is not used for sampling (the actual sampling area is the rasterized
+    zone, see make_zone_raster()); it is just a representative (east, north)
+    location for terminal messages and the optional 'vector' output.
+
+    :param str zone: name of the vector map
+    :return tuple: (east, north) as floats
+    """
+    info = gs.parse_command("v.info", flags="g", map=zone)
+    east = (float(info["east"]) + float(info["west"])) / 2.0
+    north = (float(info["north"]) + float(info["south"])) / 2.0
+    return (east, north)
+
+
+def find_column(header, name):
+    """Return the index of a column named ``name`` in a pipe-table header.
+
+    Shared by extract_series() and extract_zonal_series() so both locate
+    their columns by name rather than by (version-dependent) position.
+
+    :param list header: header row, already split on '|'
+    :param str name: column name to look up
+    :return int|None: column index, or None if not present
+    """
+    try:
+        return header.index(name)
+    except ValueError:
+        return None
+
+
+def parse_zonal_token(token):
+    """Parse one t.rast.univar cell value, mapping null/NaN tokens to None.
+
+    t.rast.univar reports an all-null timestep (e.g. no valid pixels in the
+    zone) as 'nan' or '-nan' rather than the '*'/'None' tokens t.rast.what
+    uses, so those are treated as missing here too.
+
+    :param str token: raw cell value
+    :return float|None: the parsed value, or None if missing/unparseable
+    """
+    token = token.strip()
+    if token.lower() in ("", "*", "none", "nan", "-nan"):
+        return None
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
 def extract_series(strds, east, north, where, null_value="nan", nprocs=1):
     """Extract a (date, value) series for one point from an strds.
 
@@ -605,9 +751,8 @@ def extract_series(strds, east, north, where, null_value="nan", nprocs=1):
 
     header = lines[0].split("|")
     # Row layout for a single point: x|y|start|end|value
-    try:
-        start_idx = header.index("start")
-    except ValueError:
+    start_idx = find_column(header, "start")
+    if start_idx is None:
         # Fall back to position.
         start_idx = 2 if len(header) >= 5 else 0
     value_idx = len(header) - 1
@@ -631,6 +776,113 @@ def extract_series(strds, east, north, where, null_value="nan", nprocs=1):
     if not dates:
         gs.fatal(_("Could not parse any timesteps from t.rast.what output."))
     return (dates, values)
+
+
+def extract_zonal_series(strds, zone_raster, where, statistic, nprocs, want_dispersion):
+    """Extract a (date, value) series pooled over a zone from an strds.
+
+    A single t.rast.univar call (zones=zone_raster) covers every registered
+    timestep; with a single-category zones raster this yields exactly one
+    row per timestep, the zonal equivalent of extract_series()'s one point
+    per timestep.
+
+    'mean' uses the plain (non-extended) statistics, which already include
+    the standard deviation. 'median' requires t.rast.univar's extended-
+    statistics mode (-e), which also yields the first/third quartiles used
+    for the dispersion band, at no extra cost. Extended statistics sort all
+    cell values in memory per map, a real cost on very large rasters.
+
+    :param str strds: name of the input space-time raster dataset
+    :param str zone_raster: name of the (single-category) zones raster
+    :param str where: optional t.* WHERE clause to subset maps
+    :param str statistic: 'mean' or 'median'
+    :param int nprocs: number of parallel processes for t.rast.univar
+    :param bool want_dispersion: also return the lower/upper dispersion band
+        (mean +/- stddev, or the first/third quartile for median)
+
+    :return tuple: (dates, values, lower, upper) where lower/upper are lists
+        of float/None (same length as dates), or (None, None) when
+        want_dispersion is False
+    """
+    kwargs = {"input": strds, "zones": zone_raster, "nprocs": nprocs}
+    if where:
+        kwargs["where"] = where
+    flags = ""
+    if statistic == "median":
+        flags = "e"
+        kwargs["percentile"] = 50
+
+    try:
+        raw = gs.read_command("t.rast.univar", flags=flags, **kwargs)
+    except CalledModuleError:
+        gs.fatal(
+            _(
+                "t.rast.univar failed while sampling strds '{}' over the "
+                "zone. Check that the dataset exists and that the zone "
+                "overlaps the current computational region."
+            ).format(strds)
+        )
+
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    if not lines:
+        gs.fatal(_("t.rast.univar returned no data for the given zone."))
+
+    header = lines[0].split("|")
+    start_idx = find_column(header, "start")
+    value_name = "mean" if statistic == "mean" else "median"
+    value_idx = find_column(header, value_name)
+    if start_idx is None or value_idx is None:
+        gs.fatal(
+            _(
+                "Could not find the expected 'start'/'{}' columns in "
+                "t.rast.univar output."
+            ).format(value_name)
+        )
+
+    lower_idx = upper_idx = None
+    if want_dispersion:
+        if statistic == "mean":
+            lower_idx = find_column(header, "stddev")
+            upper_idx = lower_idx
+        else:
+            lower_idx = find_column(header, "first_quartile")
+            upper_idx = find_column(header, "third_quartile")
+        if lower_idx is None or upper_idx is None:
+            gs.fatal(
+                _(
+                    "Could not find the columns needed for the dispersion "
+                    "band in t.rast.univar output."
+                )
+            )
+
+    dates = []
+    values = []
+    lowers = [] if want_dispersion else None
+    uppers = [] if want_dispersion else None
+    width = max(start_idx, value_idx, lower_idx or 0, upper_idx or 0) + 1
+    for ln in lines[1:]:
+        cols = ln.split("|")
+        if len(cols) < width:
+            continue
+        dates.append(cols[start_idx])
+        value = parse_zonal_token(cols[value_idx])
+        values.append(value)
+        if want_dispersion:
+            if statistic == "mean":
+                spread = parse_zonal_token(cols[lower_idx])
+                lowers.append(
+                    value - spread if value is not None and spread is not None else None
+                )
+                uppers.append(
+                    value + spread if value is not None and spread is not None else None
+                )
+            else:
+                lowers.append(parse_zonal_token(cols[lower_idx]))
+                uppers.append(parse_zonal_token(cols[upper_idx]))
+
+    if not dates:
+        gs.fatal(_("Could not parse any timesteps from t.rast.univar output."))
+    return (dates, values, lowers, uppers)
 
 
 def build_series(dates, values, temporal_type="absolute"):
@@ -1223,16 +1475,50 @@ def format_slope(value, unit_label=None):
     return text
 
 
-def write_csv(result, csv_path, temporal_type="absolute"):
-    """Write the decomposition components to a CSV file."""
-    df = pd.DataFrame(
-        {
-            "observed": result.observed,
-            "trend": result.trend,
-            "seasonal": result.seasonal,
-            "residual": result.resid,
-        }
-    )
+def write_csv(
+    result,
+    csv_path,
+    temporal_type="absolute",
+    band_lower=None,
+    band_upper=None,
+    statistic=None,
+    envelope_lower=None,
+    envelope_upper=None,
+):
+    """Write the decomposition components to a CSV file.
+
+    When a dispersion band is given (zone mode with the -d flag), it is
+    added as extra columns named for what they actually are: 'sd' for the
+    mean statistic's +/-1 standard deviation half-width, or
+    'first_quartile'/'third_quartile' for the median statistic's IQR bounds.
+    When a seasonal envelope is given (the -e flag), it is added as
+    'seasonal_lower'/'seasonal_upper' columns.
+
+    :param dict|None band_lower: regularized lower-band Series, or None
+    :param dict|None band_upper: regularized upper-band Series, or None
+    :param str|None statistic: 'mean' or 'median' (selects the column
+        naming for the band); ignored when no band is given
+    :param pandas.Series|None envelope_lower: rolling min of the seasonal
+        component, or None
+    :param pandas.Series|None envelope_upper: rolling max of the seasonal
+        component, or None
+    """
+    columns = {
+        "observed": result.observed,
+        "trend": result.trend,
+        "seasonal": result.seasonal,
+        "residual": result.resid,
+    }
+    if band_lower is not None and band_upper is not None:
+        if statistic == "mean":
+            columns["sd"] = result.observed - band_lower
+        else:
+            columns["first_quartile"] = band_lower
+            columns["third_quartile"] = band_upper
+    if envelope_lower is not None and envelope_upper is not None:
+        columns["seasonal_lower"] = envelope_lower
+        columns["seasonal_upper"] = envelope_upper
+    df = pd.DataFrame(columns)
     df.index.name = "time_step" if temporal_type == "relative" else "date"
     df.to_csv(csv_path)
     gs.message(_("Components written to {}").format(csv_path))
@@ -1692,6 +1978,15 @@ def plot_result(
     line_width=None,
     title=None,
     plots=None,
+    band_lower=None,
+    band_upper=None,
+    band_lower2=None,
+    band_upper2=None,
+    band_label=None,
+    envelope_lower=None,
+    envelope_upper=None,
+    envelope_lower2=None,
+    envelope_upper2=None,
 ):
     """Build the multi-panel STL plot, in the style of R's plot(stl(...)).
 
@@ -1730,6 +2025,23 @@ def plot_result(
     :param list|None plots: which panels to draw, as a subset of 'observed',
         'trend', 'seasonal' and 'residual'. None (or all four) draws the full
         four-panel figure.
+    :param pandas.Series|None band_lower: lower bound of the dispersion band
+        for the primary dataset (zone mode with -d), aligned with
+        ``result.observed``'s index. Shaded on the Observed panel only.
+    :param pandas.Series|None band_upper: upper bound of that band.
+    :param pandas.Series|None band_lower2: lower bound for the second
+        dataset (when ``result2`` is given).
+    :param pandas.Series|None band_upper2: upper bound for the second dataset.
+    :param str|None band_label: legend label for the band (e.g. '± 1 SD' or
+        'IQR (25-75%)').
+    :param pandas.Series|None envelope_lower: rolling min of the primary
+        dataset's seasonal component (the -e flag), aligned with
+        ``result.seasonal``'s index. Drawn on the Seasonal panel only.
+    :param pandas.Series|None envelope_upper: rolling max of that component.
+    :param pandas.Series|None envelope_lower2: rolling min for the second
+        dataset (when ``result2`` is given).
+    :param pandas.Series|None envelope_upper2: rolling max for the second
+        dataset.
     """
     have_second = result2 is not None
     # Series line colours: user-supplied or sensible defaults.
@@ -1773,6 +2085,10 @@ def plot_result(
     # supplied a custom colour; otherwise keep matplotlib's default so a plain
     # single-dataset plot looks unchanged.
     primary_color = color1 if (have_second or line_color) else None
+    # Twin axis of the Observed panel, if any, so the band patch drawn there
+    # (see the 'have_second' block below) can be picked up for the combined
+    # legend built after the loop.
+    observed_twin_ax = None
 
     for ax, (label, comp, comp2) in zip(axes, panels):
         ax.grid(axis="both", color="lightgrey", linewidth=0.3, zorder=0)
@@ -1780,6 +2096,44 @@ def plot_result(
 
         # primary dataset on the left axis
         # ---------------------------------------------------------
+        if label == "Observed" and band_lower is not None and band_upper is not None:
+            ax.fill_between(
+                comp.index,
+                band_lower.values,
+                band_upper.values,
+                color=primary_color or "tab:blue",
+                alpha=0.15,
+                linewidth=0,
+                zorder=1,
+                label=band_label + (" ({})".format(label1) if have_second else ""),
+            )
+            if not have_second:
+                ax.legend(loc="best", fontsize=legend_fontsize, frameon=False)
+        if (
+            label == "Seasonal"
+            and envelope_lower is not None
+            and envelope_upper is not None
+        ):
+            env_color = primary_color or "tab:blue"
+            ax.plot(
+                comp.index,
+                envelope_upper.values,
+                linestyle="--",
+                linewidth=1,
+                color=env_color,
+                alpha=0.8,
+                label=_("Seasonal envelope")
+                + (" ({})".format(label1) if have_second else ""),
+            )
+            ax.plot(
+                comp.index,
+                envelope_lower.values,
+                linestyle="--",
+                linewidth=1,
+                color=env_color,
+                alpha=0.8,
+                label="_nolegend_",
+            )
         if label == "Residual":
             ax.axhline(0, color="grey", linewidth=0.8, zorder=1)
             ax.plot(
@@ -1822,6 +2176,46 @@ def plot_result(
         if have_second:
             # Shared scale: draw on the same axis. Twin scale: own right axis.
             ax2 = ax if shared_scale else ax.twinx()
+            if label == "Observed":
+                observed_twin_ax = ax2
+            if (
+                label == "Observed"
+                and band_lower2 is not None
+                and band_upper2 is not None
+            ):
+                ax2.fill_between(
+                    comp2.index,
+                    band_lower2.values,
+                    band_upper2.values,
+                    color=color2,
+                    alpha=0.15,
+                    linewidth=0,
+                    zorder=1,
+                    label=band_label + " ({})".format(label2),
+                )
+            if (
+                label == "Seasonal"
+                and envelope_lower2 is not None
+                and envelope_upper2 is not None
+            ):
+                ax2.plot(
+                    comp2.index,
+                    envelope_upper2.values,
+                    linestyle="--",
+                    linewidth=1,
+                    color=color2,
+                    alpha=0.8,
+                    label=_("Seasonal envelope") + " ({})".format(label2),
+                )
+                ax2.plot(
+                    comp2.index,
+                    envelope_lower2.values,
+                    linestyle="--",
+                    linewidth=1,
+                    color=color2,
+                    alpha=0.8,
+                    label="_nolegend_",
+                )
             if label == "Residual":
                 if not shared_scale:
                     ax2.axhline(0, color="grey", linewidth=0.8, zorder=1)
@@ -1861,11 +2255,24 @@ def plot_result(
                 frameon=False,
             )
 
+        if label == "Seasonal" and (
+            envelope_lower is not None or envelope_lower2 is not None
+        ):
+            handles, _env_labels = ax.get_legend_handles_labels()
+            if have_second and not shared_scale:
+                twin_handles, _env_twin_labels = ax2.get_legend_handles_labels()
+                handles += twin_handles
+            if handles:
+                ax.legend(
+                    handles=handles, loc="best", fontsize=legend_fontsize, frameon=False
+                )
+
         ax.set_ylabel(label)
         ax.margins(x=0.01)
 
     # A single legend identifying the two datasets, on the Observed panel when
-    # it is drawn, otherwise on the first panel.
+    # it is drawn, otherwise on the first panel. Any dispersion-band patches
+    # drawn on that panel (via their own 'label=') are picked up alongside.
     if have_second:
         observed_ax = next(
             (ax for ax, (label, *_) in zip(axes, panels) if label == "Observed"),
@@ -1873,8 +2280,15 @@ def plot_result(
         )
         line1 = mpl.lines.Line2D([], [], color=color1, linewidth=1, label=label1)
         line2 = mpl.lines.Line2D([], [], color=color2, linewidth=1, label=label2)
+        band_handles, _band_labels = observed_ax.get_legend_handles_labels()
+        if observed_twin_ax is not None and observed_twin_ax is not observed_ax:
+            twin_handles, _twin_labels = observed_twin_ax.get_legend_handles_labels()
+            band_handles += twin_handles
         observed_ax.legend(
-            handles=[line1, line2], loc="best", fontsize=legend_fontsize, frameon=False
+            handles=[line1, line2] + band_handles,
+            loc="best",
+            fontsize=legend_fontsize,
+            frameon=False,
         )
 
     axes[-1].set_xlabel("Time step" if temporal_type == "relative" else "Date")
@@ -2037,6 +2451,7 @@ def decompose_and_fit(
     step=None,
     slope_unit="auto",
     label=None,
+    show_envelope=False,
 ):
     """Run STL and the trend regressions on one regularized series, with reporting.
 
@@ -2061,9 +2476,14 @@ def decompose_and_fit(
         reporting-unit conversion
     :param str slope_unit: the slope_unit= option ('auto','step','day',...)
     :param str|None label: dataset name used to prefix messages (or None)
+    :param bool show_envelope: also compute the seasonal amplitude envelope
+        (rolling min/max of the seasonal component over one period), for the
+        -e flag
 
-    :return tuple: (result, trend_fit) where result is the STL fit and
-        trend_fit is the dict from fit_trend() (or None)
+    :return tuple: (result, trend_fit, envelope_lower, envelope_upper) where
+        result is the STL fit, trend_fit is the dict from fit_trend() (or
+        None), and envelope_lower/envelope_upper are the rolling min/max of
+        the seasonal component (or None, None when show_envelope is False)
     """
     prefix = "[{}] ".format(label) if label else ""
 
@@ -2203,7 +2623,17 @@ def decompose_and_fit(
                 )
             )
 
-    return result, trend_fit
+    # Seasonal amplitude envelope: a rolling min/max of the seasonal component
+    # over a window one period wide, showing how the amplitude of the
+    # seasonal cycle itself changes over time. Centered, so it needs a full
+    # window on both sides; the first/last half-period are left as gaps
+    # (NaN) rather than padded with a partial, less meaningful extremum.
+    envelope_lower = envelope_upper = None
+    if show_envelope:
+        envelope_upper = result.seasonal.rolling(window=period, center=True).max()
+        envelope_lower = result.seasonal.rolling(window=period, center=True).min()
+
+    return result, trend_fit, envelope_lower, envelope_upper
 
 
 def main(options, flags):
@@ -2212,6 +2642,8 @@ def main(options, flags):
     output = options["output"]
     backend_opt = options["backend"]
     coordinates = options["coordinates"]
+    zone = options["zone"]
+    statistic = options["statistic"]
     strds = options["strds"]
     strds2 = options["strds2"]
     where = options["where"]
@@ -2246,6 +2678,8 @@ def main(options, flags):
     show_band = flags["b"]
     show_stats = flags["t"]
     same_yscale = flags["y"]
+    show_dispersion = flags["d"]
+    show_envelope = flags["e"]
     line_color = grass_color_to_mpl(options["color"]) if options["color"] else None
     line_color2 = grass_color_to_mpl(options["color2"]) if options["color2"] else None
     fontsize = float(options["fontsize"]) if options["fontsize"] else None
@@ -2262,9 +2696,20 @@ def main(options, flags):
     lazy_import_py_modules(backend=backend)
     apply_style(options["style"])
 
-    # Get the point coordinates
-    east, north = coords_from_option(coordinates)
-    gs.message(_("Using point (east, north) = ({}, {})").format(east, north))
+    # Get the sampling location: either a point, or a zone rasterized from a
+    # vector map (all its features pooled into a single zone).
+    zone_raster = None
+    if zone:
+        validate_zone(zone)
+        zone_raster = make_zone_raster(zone)
+        east, north = zone_bbox_center(zone)
+        gs.message(
+            _("Using zone '{}' ({} statistic; bbox center for tagging: "
+              "east={}, north={}).").format(zone, statistic, east, north)
+        )
+    else:
+        east, north = coords_from_option(coordinates)
+        gs.message(_("Using point (east, north) = ({}, {})").format(east, north))
 
     # Check if the strds exists and read its temporal type.
     try:
@@ -2310,21 +2755,41 @@ def main(options, flags):
     # Extract -> regularize -> decompose/fit each dataset. When a second dataset
     # is present, its terminal messages are prefixed with its name.
     results = []
+    bands = []
+    envelopes = []
     for index, (ds_name, ds_tinfo) in enumerate(datasets):
         label = (strds2 and ds_name) or None
-        if index == 0:
-            gs.message(_("Extracting the point time series..."))
-        else:
-            gs.message(
-                _("Extracting the point time series for '{}'...").format(ds_name)
+        if zone_raster:
+            if index == 0:
+                gs.message(_("Extracting the zonal time series..."))
+            else:
+                gs.message(
+                    _("Extracting the zonal time series for '{}'...").format(ds_name)
+                )
+            ds_dates, ds_values, ds_lower, ds_upper = extract_zonal_series(
+                strds=ds_name,
+                zone_raster=zone_raster,
+                where=where,
+                statistic=statistic,
+                nprocs=nprocs,
+                want_dispersion=show_dispersion,
             )
-        ds_dates, ds_values = extract_series(
-            strds=ds_name,
-            east=east,
-            north=north,
-            where=where,
-            nprocs=nprocs,
-        )
+        else:
+            if index == 0:
+                gs.message(_("Extracting the point time series..."))
+            else:
+                gs.message(
+                    _("Extracting the point time series for '{}'...").format(ds_name)
+                )
+            ds_dates, ds_values = extract_series(
+                strds=ds_name,
+                east=east,
+                north=north,
+                where=where,
+                nprocs=nprocs,
+            )
+            ds_lower = ds_upper = None
+
         ds_series = build_series(ds_dates, ds_values, temporal_type=temporal_type)
         n_valid = int(ds_series.notna().sum())
         gs.message(
@@ -2350,7 +2815,33 @@ def main(options, flags):
             step=step,
             tinfo=ds_tinfo,
         )
-        ds_result, ds_trend_fit = decompose_and_fit(
+
+        # The dispersion band (if any) is observed-panel annotation only; it
+        # is regularized onto the same grid as the series but never goes
+        # through decompose_and_fit()/STL.
+        ds_band_lower = ds_band_upper = None
+        if ds_lower is not None:
+            ds_band_lower = regularize(
+                series=build_series(ds_dates, ds_lower, temporal_type=temporal_type),
+                frequency=frequency,
+                method=interpolation,
+                order=order,
+                temporal_type=temporal_type,
+                step=step,
+                tinfo=ds_tinfo,
+            )
+            ds_band_upper = regularize(
+                series=build_series(ds_dates, ds_upper, temporal_type=temporal_type),
+                frequency=frequency,
+                method=interpolation,
+                order=order,
+                temporal_type=temporal_type,
+                step=step,
+                tinfo=ds_tinfo,
+            )
+        bands.append((ds_band_lower, ds_band_upper))
+
+        ds_result, ds_trend_fit, ds_envelope_lower, ds_envelope_upper = decompose_and_fit(
             ds_regular,
             period_opt,
             temporal_type,
@@ -2365,15 +2856,33 @@ def main(options, flags):
             step=step,
             slope_unit=slope_unit,
             label=label,
+            show_envelope=show_envelope,
         )
         results.append((ds_result, ds_trend_fit))
+        envelopes.append((ds_envelope_lower, ds_envelope_upper))
 
     result, trend_fit = results[0]
     result2, trend_fit2 = results[1] if len(results) > 1 else (None, None)
+    band_lower, band_upper = bands[0]
+    band_lower2, band_upper2 = bands[1] if len(bands) > 1 else (None, None)
+    band_label = None
+    if show_dispersion and zone_raster:
+        band_label = _("± 1 SD") if statistic == "mean" else _("IQR (25-75%)")
+    envelope_lower, envelope_upper = envelopes[0]
+    envelope_lower2, envelope_upper2 = envelopes[1] if len(envelopes) > 1 else (None, None)
 
     # Write CSV if requested
     if csv:
-        write_csv(result, csv, temporal_type=temporal_type)
+        write_csv(
+            result,
+            csv,
+            temporal_type=temporal_type,
+            band_lower=band_lower,
+            band_upper=band_upper,
+            statistic=statistic if zone_raster else None,
+            envelope_lower=envelope_lower,
+            envelope_upper=envelope_upper,
+        )
 
     # Create point vector layer if requested.
     if vector:
@@ -2413,6 +2922,15 @@ def main(options, flags):
         line_width=line_width,
         title=title,
         plots=plots,
+        band_lower=band_lower,
+        band_upper=band_upper,
+        band_lower2=band_lower2,
+        band_upper2=band_upper2,
+        band_label=band_label,
+        envelope_lower=envelope_lower,
+        envelope_upper=envelope_upper,
+        envelope_lower2=envelope_lower2,
+        envelope_upper2=envelope_upper2,
     )
 
 

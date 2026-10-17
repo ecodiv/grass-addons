@@ -367,6 +367,26 @@
 # % guisection: Plotting
 # %end
 
+# %option
+# % key: vlines
+# % type: string
+# % label: Vertical reference line date(s)
+# % description: Date(s) (absolute-time strds, e.g. '2019-08-15') or time step(s) (relative-time strds, integer) at which to draw a dashed vertical reference line across all panels, e.g. to mark a known event. Comma separated for multiple lines.
+# % multiple: yes
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: vlines_labels
+# % type: string
+# % label: Vertical reference line label(s)
+# % description: Optional label(s) for the 'vlines' dates, in the same order. When given, the number of labels must match the number of 'vlines' values. Shown rotated above the top panel.
+# % multiple: yes
+# % required: no
+# % guisection: Plotting
+# %end
+
 # %option G_OPT_F_OUTPUT
 # % key: output
 # % required: no
@@ -435,6 +455,7 @@
 # % requires: -b, -g
 # % requires: gam_direction, -g
 # % requires: -y, strds2
+# % requires: vlines_labels, vlines
 # %end
 
 
@@ -900,6 +921,53 @@ def build_series(dates, values, temporal_type="absolute"):
     s = pd.Series(values, index=idx, dtype="float64").sort_index()
     s = s[~s.index.duplicated(keep="first")]
     return s
+
+
+def parse_vlines(vlines_opt, labels_opt, temporal_type):
+    """Parse the vlines/vlines_labels options into plot-ready positions.
+
+    :param str vlines_opt: comma separated dates (absolute time) or integer
+        time steps (relative time); may be empty
+    :param str labels_opt: comma separated labels, in the same order and
+        count as vlines_opt; may be empty (no labels)
+    :param str temporal_type: 'absolute' or 'relative'
+    :return list: list of (position, label|None) tuples, position being a
+        pandas.Timestamp (absolute) or int (relative)
+    """
+    if not vlines_opt:
+        return []
+    raw_values = [v.strip() for v in vlines_opt.split(",") if v.strip()]
+    positions = []
+    for value in raw_values:
+        if temporal_type == "relative":
+            try:
+                positions.append(int(value))
+            except ValueError:
+                gs.fatal(
+                    _(
+                        "Could not parse 'vlines' value '{}' as an integer "
+                        "time step."
+                    ).format(value)
+                )
+        else:
+            try:
+                positions.append(pd.to_datetime(value))
+            except (ValueError, TypeError):
+                gs.fatal(
+                    _("Could not parse 'vlines' value '{}' as a date.").format(value)
+                )
+
+    labels = [label.strip() for label in labels_opt.split(",")] if labels_opt else []
+    if labels and len(labels) != len(positions):
+        gs.fatal(
+            _(
+                "'vlines_labels' must have the same number of values as "
+                "'vlines' ({labels} vs {vlines})."
+            ).format(labels=len(labels), vlines=len(positions))
+        )
+    if not labels:
+        labels = [None] * len(positions)
+    return list(zip(positions, labels))
 
 
 def resolve_relative_step(series, step_opt, tinfo):
@@ -1987,6 +2055,7 @@ def plot_result(
     envelope_upper=None,
     envelope_lower2=None,
     envelope_upper2=None,
+    vlines=None,
 ):
     """Build the multi-panel STL plot, in the style of R's plot(stl(...)).
 
@@ -2042,6 +2111,9 @@ def plot_result(
         dataset (when ``result2`` is given).
     :param pandas.Series|None envelope_upper2: rolling max for the second
         dataset.
+    :param list|None vlines: (position, label|None) pairs, position being a
+        pandas.Timestamp (absolute time) or int (relative time), drawn as a
+        dashed vertical reference line on every panel.
     """
     have_second = result2 is not None
     # Series line colours: user-supplied or sensible defaults.
@@ -2290,6 +2362,33 @@ def plot_result(
             fontsize=legend_fontsize,
             frameon=False,
         )
+
+    # Vertical reference lines (vlines=), drawn on every panel; an optional
+    # label per line is shown rotated just above the top panel only, to avoid
+    # repeating it on each panel.
+    if vlines:
+        for position, vline_label in vlines:
+            for ax in axes:
+                ax.axvline(
+                    position,
+                    color="black",
+                    linestyle="--",
+                    linewidth=0.8,
+                    alpha=0.6,
+                    zorder=2,
+                )
+            if vline_label:
+                axes[0].annotate(
+                    vline_label,
+                    xy=(position, 1.0),
+                    xycoords=("data", "axes fraction"),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    rotation=90,
+                    va="bottom",
+                    ha="center",
+                    fontsize=legend_fontsize,
+                )
 
     axes[-1].set_xlabel("Time step" if temporal_type == "relative" else "Date")
     fig.align_ylabels(axes)
@@ -2721,6 +2820,11 @@ def main(options, flags):
     # Validate option-only requirements up front.
     validate_options(options, flags, temporal_type)
 
+    # Vertical reference lines (dates for absolute time, time steps for
+    # relative time), parsed here (after the temporal type is known) so a bad
+    # value is caught before the expensive sampling step below.
+    vlines = parse_vlines(options["vlines"], options["vlines_labels"], temporal_type)
+
     # Build the list of datasets to analyze. The second strds is optional
     datasets = [(strds, tinfo)]
     if strds2:
@@ -2931,6 +3035,7 @@ def main(options, flags):
         envelope_upper=envelope_upper,
         envelope_lower2=envelope_lower2,
         envelope_upper2=envelope_upper2,
+        vlines=vlines,
     )
 
 

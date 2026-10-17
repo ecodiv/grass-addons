@@ -280,6 +280,17 @@ trend window:
 If you see a fitted line or curve being pulled by an upswing or downswing right
 at the edge of the plot, increasing **trend_trim** is the appropriate fix.
 
+### Vertical reference lines
+
+The **vlines** option draws one or more dashed vertical reference lines across
+every panel, for example to mark a known event (a fire, flood, land-use
+change, or similar) against the decomposition. Give one or more dates
+(*vlines=2019-08-15*) for absolute-time **strds**, or one or more integer time
+steps for relative-time **strds**; separate multiple values with commas
+(*vlines=2015-01-01,2019-08-15*). Optional text labels for each line can be
+given with **vlines_labels**, in the same order and count as **vlines**
+(*vlines_labels=Fire,Flood*); they are shown rotated above the top panel.
+
 ### Output
 
 By default the multi-panel plot is shown in an interactive window. If **output**
@@ -477,6 +488,21 @@ The trend regressions, including the GAM, are fitted on the deseasonalized
 series (`trend + residual`), so the confidence band reflects the genuine
 short-term scatter. Keep in mind that the reported *p*-values do not account for
 serial autocorrelation (see the trend regression section above).
+
+### Mark known events with vertical reference lines
+
+Use **vlines** (with **vlines_labels**) to mark one or more known dates, such
+as a land-use change or extreme event, across all panels:
+
+```sh
+t.rast.stl strds=tempmean coordinates=636000,221000 \
+vlines=2007-01-01,2012-01-01 vlines_labels="Warm 2007,Warm 2012" \
+output=t_rast_stl_vlines.png
+```
+
+This draws a dashed vertical line at each date on every panel, labelled at the
+top. Dates can be given without labels (*vlines=2007-01-01,2012-01-01*); for a
+relative-time strds, give integer time steps instead of dates.
 
 ### Sample over an area instead of a point
 

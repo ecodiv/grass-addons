@@ -13,8 +13,9 @@ and/or a shape-constrained (monotone) Generalized Additive Model (GAM) curve.
 <p>
 The module strds with absolute (calendar-dated) or relative
 (integer-stepped) time. For a point (<b>coordinates</b>) it samples the pixel
-value at every registered timestep. For an area (<b>zone</b>) it takes the
-average or median value of all the pixels in the zone. The resulting series is
+value at every registered timestep. For an area (<b>zone</b> or
+<b>raster</b>) it takes the average or median value of all the pixels in the
+area. The resulting series is
 regularized onto an evenly, user-defined, spaced time axis, and then run through
 <a
 href="https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html">statsmodels.tsa.seasonal.STL</a>.
@@ -58,7 +59,8 @@ section.
 <h3>Sampling area</h3>
 
 The series is sampled either at a single point (<b>coordinates</b>) or pooled
-over an area (<b>zone</b>). These two options are mutually exclusive.
+over an area, defined either by a vector map (<b>zone</b>) or a raster map
+(<b>raster</b>). These three options are mutually exclusive.
 
 <p>
 The point is given with <b>coordinates=east,north</b> in the coordinate system
@@ -75,19 +77,29 @@ href="v.extract.md">v.extract</a></i> beforehand to pre-select a subset of
 features if the map contains more than you want pooled together.
 
 <p>
-Either way, the module samples the <i>current computational region</i>'s
-resolution. Set the region with <i><a href="g.region.md">g.region</a></i> before
-running if needed. The point, or at least part of the zone, must fall inside the
-current region.
+<b>raster</b> is a raster map defining the sampling area: every <i>non-null</i>
+cell is pooled into a single sample, the raster counterpart of <b>zone</b>. The
+map can be of any type (CELL, FCELL or DCELL) without a performance cost.
 
 <p>
-With <b>zone</b>, the per-timestep pixel values within the area are summarized
-by <b>statistic</b>: <tt>mean</tt> (the default) or <tt>median</tt>. Note that
-the <tt>median</tt> option requires t.rast.univar's extended-statistics mode,
-which can require a lot of memory if used with large rasters. The <b>-d</b> flag
-additionally shades a band around the Observed series showing the spread of
-pixel values at each timestep: ±1 standard deviation for <tt>mean</tt>, or the
-interquartile range (25th-75th percentile) for <tt>median</tt>.
+Either way, the module samples the <i>current computational region</i>'s
+resolution. Set the region with <i><a href="g.region.md">g.region</a></i> before
+running if needed. The point, or at least part of the zone or raster, must fall
+inside the current region.
+
+<p>
+With <b>zone</b> or <b>raster</b>, the per-timestep pixel values within the
+area are summarized by <b>statistic</b>: <tt>mean</tt> (the default),
+<tt>median</tt>, <tt>min</tt>, <tt>max</tt> or <tt>percentile</tt>.
+<tt>percentile</tt> requires <b>percentile_value</b> (0-100). Note that
+<tt>median</tt> and <tt>percentile</tt> require t.rast.univar's
+extended-statistics mode, which can require a lot of memory if used with
+large rasters; <tt>mean</tt>, <tt>min</tt> and <tt>max</tt> do not. The
+<b>-d</b> flag additionally shades a band around the Observed series showing
+the spread of pixel values at each timestep: ±1 standard deviation for
+<tt>mean</tt>, or the interquartile range (25th-75th percentile) for
+<tt>median</tt>. It is only valid with <tt>statistic=mean</tt> or
+<tt>statistic=median</tt>.
 
 <h3>Comparing two datasets</h3>
 
@@ -179,6 +191,37 @@ your data will be resampled. For example, setting data that is actually 16-day
 composites to <tt>D</tt> (daily) will create many interpolated points and
 smoothen the data series.
 
+<p>
+<b>temporal_outliers</b> (and <b>temporal_outliers2</b> for <tt>strds2</tt>)
+detects and excludes short-lived spikes and dips before the analysis. It takes
+<tt>threshold,window</tt>, where <b>threshold</b> is the minimum deviation from
+the local median (in the data's own units, e.g., 0.3 NDVI units) and
+<b>window</b> defines the period used to detect the spike (calendar days for
+absolute-time data, time steps for relative-time data). An observation is
+excluded only if it deviates from the median of neighbouring observations by at
+least <b>threshold</b> and returns close to that level within <b>window</b>.
+Sustained changes are retained, as they may represent genuine environmental
+changes. Excluded observations are treated as missing and filled through
+<b>interpolation</b> before STL decomposition and trend regression. They are
+shown as lighter-coloured markers in the Observed panel, unless <b>-e</b> is
+given, in which case the markers are left out and the Observed panel's y-axis
+autoscales to the gap-filled series alone, rather than being stretched to also
+fit the excluded values. The pixel-value spread band (<b>-d</b>) is blanked and
+interpolated at the same timesteps, so it does not keep showing the raw spread
+at an excluded date either.
+
+<p>
+This option helps identify potential data artefacts, such as cloud contamination
+or sensor errors, that STL's robust fitting (<b>-r</b>) and the Theil–Sen trend
+estimator (<b>-s</b>) may not adequately handle. <b>Use it with caution:</b>
+rapid changes can also be genuine, and removing observations can affect
+estimated trends and their statistical significance, particularly in short time
+series. Choose <b>threshold</b> and <b>window</b> based on the expected
+behaviour of the data, not to obtain a particular result. Always inspect the
+excluded observations, justify the chosen settings, and preferably compare
+results with and without filtering to avoid inadvertently introducing bias or
+<i>p-hacking</i>.
+
 <h3>Decomposition (STL)</h3>
 
 The decomposition wraps <tt>statsmodels.tsa.seasonal.STL</tt>. Its most
@@ -236,12 +279,20 @@ spikes are distorting the fit.
 
 <h3>Seasonal amplitude envelope</h3>
 
-The <b>-e</b> flag draws a rolling min/max of the seasonal component on the
-Seasonal panel: a moving window one seasonal <b>period</b> wide, centered on
-each point, tracks the local maximum and minimum of the seasonal cycle. It can
-be used to show a decrease or increase in the amplitude over time (for example,
-a vegetation index whose greening/senescence amplitude strengthens or dampens
-across years).
+The <b>seasonal_envelope</b> option draws a rolling envelope of the seasonal
+component on the Seasonal panel: a moving window one seasonal <b>period</b>
+wide, centered on each point, tracks the local extremes of the seasonal cycle.
+It can be used to show a decrease or increase in the amplitude over time (for
+example, a vegetation index whose greening/senescence amplitude strengthens or
+dampens across years).
+
+<p>
+The value is the fraction trimmed off each end of the window before taking the
+envelope: <tt>seasonal_envelope=0</tt> uses the plain min/max of the window,
+while e.g. <tt>seasonal_envelope=0.1</tt> uses its 10th/90th percentile instead,
+so that one unusually extreme cycle doesn't dominate the envelope. A window that
+doesn't fully fit (the first/last half-period of the series) is left as a gap
+rather than computed from a partial window.
 
 <p>
 With <b>csv</b>, the envelope is written as
@@ -373,10 +424,10 @@ only if your system needs a different interactive backend (e.g. <tt>TkAgg</tt>,
 <p>
 The <b>csv</b> option additionally writes the observed, trend, seasonal and
 residual components per date, so they can be replotted or analysed in your
-software tool of choice. With <b>zone</b> and <b>-d</b>, the dispersion band is
-included too: a <tt>sd</tt> column for <tt>statistic=mean</tt>, or
+software tool of choice. With <b>zone</b> or <b>raster</b> and <b>-d</b>, the
+dispersion band is included too: a <tt>sd</tt> column for <tt>statistic=mean</tt>, or
 <tt>first_quartile</tt>/ <tt>third_quartile</tt> columns for
-<tt>statistic=median</tt>. With the <b>-e</b> flag, the seasonal amplitude
+<tt>statistic=median</tt>. With <b>seasonal_envelope</b>, the seasonal amplitude
 envelope is included as <tt>seasonal_lower</tt>/<tt>seasonal_upper</tt> columns.
 
 <p>
@@ -384,9 +435,9 @@ The <b>vector</b> option creates a point vector layer carrying the trend
 regression results (OLS slope, R², <i>p</i>-value, Theil-Sen slope, Mann-Kendall
 tau and <i>p</i>-value) as attributes. When a monotone GAM was fitted
 (<b>-g</b>), its net change and explained deviance are stored as well. With
-<b>coordinates</b> the point is at the selected location; with <b>zone</b> it is
-placed at the center of the zone's bounding box (a tag for the location, not a
-geometry derived from the zone itself).
+<b>coordinates</b> the point is at the selected location; with <b>zone</b> or
+<b>raster</b> it is placed at the center of the zone's or raster's bounding
+box (a tag for the location, not a geometry derived from the area itself).
 
 <h3>Subsetting and performance</h3>
 
@@ -399,7 +450,8 @@ The <b>nprocs</b> option sets the number of parallel processes used during
 sampling: by <i><a href="t.rast.what.md">t.rast.what</a></i> for a point
 (<b>coordinates</b>), or by <i><a
 href="t.rast.univar.md">t.rast.univar</a></i>'s zonal extraction for an area
-(<b>zone</b>), potentially making the module substantially faster to run.
+(<b>zone</b> or <b>raster</b>), potentially making the module substantially
+faster to run.
 
 <h2>NOTES</h2>
 
@@ -626,7 +678,20 @@ values within the county varied at each timestep. For a statistic more resistant
 to outlier pixels, use <tt>statistic=median</tt> instead (the <b>-d</b> band
 then becomes the interquartile range); keep in mind this requires
 t.rast.univar's extended-statistics mode, which is more memory-intensive on
-large rasters than the <tt>mean</tt> default.
+large rasters than the <tt>mean</tt> default. <tt>statistic=min</tt>,
+<tt>max</tt> or <tt>percentile</tt> (with <b>percentile_value</b>) are also
+available, but <b>-d</b> is not meaningful with them and is rejected.
+
+<p>
+A raster map can be used the same way with <b>raster</b>, pooling over its
+non-null cells instead of a vector map's features. For example, a forest mask
+(1 inside the forest, null outside):
+
+<div class="code">
+  <pre>
+t.rast.stl strds=tempmean raster=forest_mask -d output=t_rast_stl_raster.png
+</pre>
+</div>
 
 <h3>Compare two datasets</h3>
 

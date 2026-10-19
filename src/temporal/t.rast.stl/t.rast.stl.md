@@ -12,8 +12,8 @@ least-squares (OLS) line, a robust Theil-Sen line, and/or a shape-constrained
 
 The module strds with absolute (calendar-dated) or relative (integer-stepped)
 time. For a point (**coordinates**) it samples the pixel value at every
-registered timestep. For an area (**zone**) it takes the average or median value
-of all the pixels in the zone. The resulting series is regularized onto an
+registered timestep. For an area (**zone** or **raster**) it takes the average
+or median value of all the pixels in the area. The resulting series is regularized onto an
 evenly, user-defined, spaced time axis, and then run through
 [statsmodels.tsa.seasonal.STL](https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html).
 
@@ -49,7 +49,8 @@ section.
 ### Sampling area
 
 The series is sampled either at a single point (**coordinates**) or pooled over
-an area (**zone**). These two options are mutually exclusive.
+an area, defined either by a vector map (**zone**) or a raster map
+(**raster**). These three options are mutually exclusive.
 
 The point is given with **coordinates=east,north** in the coordinate system of
 the current GRASS project. When the module dialog is launched from within the
@@ -63,18 +64,25 @@ no per-feature breakdown. Use *[v.extract](v.extract.md)* beforehand to
 pre-select a subset of features if the map contains more than you want pooled
 together.
 
+**raster** is a raster map defining the sampling area: every *non-null* cell is
+pooled into a single sample, the raster counterpart of **zone**. The map can be
+of any type (CELL, FCELL or DCELL).
+
 Either way, the module samples the *current computational region*'s
 resolution. Set the region with *[g.region](g.region.md)* before running if
-needed. The point, or at least part of the zone, must fall inside the current
-region.
+needed. The point, or at least part of the zone or raster, must fall inside
+the current region.
 
-With **zone**, the per-timestep pixel values within the area are summarized by
-**statistic**: `mean` (the default) or `median`. Note that the `median` option
-requires t.rast.univar's extended-statistics mode, which can require a lot of
-memory if used with large rasters. The **-d** flag additionally shades a band
-around the Observed series showing the spread of pixel values at each timestep:
-±1 standard deviation for `mean`, or the interquartile range (25th-75th
-percentile) for `median`. 
+With **zone** or **raster**, the per-timestep pixel values within the area are
+summarized by **statistic**: `mean` (the default), `median`, `min`, `max` or
+`percentile`. `percentile` requires **percentile_value** (0-100). Note that
+`median` and `percentile` require t.rast.univar's extended-statistics mode,
+which can require a lot of memory if used with large rasters; `mean`, `min`
+and `max` do not. The **-d** flag additionally shades a band around the
+Observed series showing the spread of pixel values at each timestep: ±1
+standard deviation for `mean`, or the interquartile range (25th-75th
+percentile) for `median`. It is only valid with `statistic=mean` or
+`statistic=median`.
 
 ### Comparing two datasets
 
@@ -153,6 +161,35 @@ real sampling of your data. If these are not matching, your data will be
 resampled. For example, setting data that is actually 16-day composites to `D`
 (daily) will create many interpolated points and smoothen the data series.
 
+**temporal_outliers** (and **temporal_outliers2** for `strds2`) detects and
+excludes short-lived spikes and dips before the analysis. It takes
+`threshold,window`, where **threshold** is the minimum deviation from the
+local median (in the data's own units, e.g., 0.3 NDVI units) and **window**
+defines the period used to detect the spike (calendar days for absolute-time
+data, time steps for relative-time data). An observation is excluded only if
+it deviates from the median of neighbouring observations by at least
+**threshold** and returns close to that level within **window**. Sustained
+changes are retained, as they may represent genuine environmental changes.
+Excluded observations are treated as missing and filled through
+**interpolation** before STL decomposition and trend regression. They are
+shown as lighter-coloured markers in the Observed panel, unless **-e** is
+given, in which case the markers are left out and the Observed panel's y-axis
+autoscales to the gap-filled series alone, rather than being stretched to also
+fit the excluded values. The pixel-value spread band (**-d**) is blanked and
+interpolated at the same timesteps, so it does not keep showing the raw spread
+at an excluded date either.
+
+This option helps identify potential data artefacts, such as cloud
+contamination or sensor errors, that STL's robust fitting (**-r**) and the
+Theil-Sen trend estimator (**-s**) may not adequately handle. **Use it with
+caution:** rapid changes can also be genuine, and removing observations can
+affect estimated trends and their statistical significance, particularly in
+short time series. Choose **threshold** and **window** based on the expected
+behaviour of the data, not to obtain a particular result. Always inspect the
+excluded observations, justify the chosen settings, and preferably compare
+results with and without filtering to avoid inadvertently introducing bias or
+*p-hacking*.
+
 ### Decomposition (STL)
 
 The decomposition wraps `statsmodels.tsa.seasonal.STL`. Its most important
@@ -201,12 +238,19 @@ distorting the fit.
 
 ### Seasonal amplitude envelope
 
-The **-e** flag draws a rolling min/max of the seasonal component on the
-Seasonal panel: a moving window one seasonal **period** wide, centered on each
-point, tracks the local maximum and minimum of the seasonal cycle. It can be
-used to show a decrease or increase in the amplitude over time (for example, a
-vegetation index whose greening/senescence amplitude strengthens or dampens
-across years).
+The **seasonal_envelope** option draws a rolling envelope of the seasonal
+component on the Seasonal panel: a moving window one seasonal **period**
+wide, centered on each point, tracks the local extremes of the seasonal
+cycle. It can be used to show a decrease or increase in the amplitude over
+time (for example, a vegetation index whose greening/senescence amplitude
+strengthens or dampens across years).
+
+The value is the fraction trimmed off each end of the window before taking
+the envelope: `seasonal_envelope=0` uses the plain min/max of the window,
+while e.g. `seasonal_envelope=0.1` uses its 10th/90th percentile instead,
+so that one unusually extreme cycle doesn't dominate the envelope. A window
+that doesn't fully fit (the first/last half-period of the series) is left
+as a gap rather than computed from a partial window.
 
 With **csv**, the envelope is written as `seasonal_lower`/`seasonal_upper`
 columns.
@@ -318,19 +362,19 @@ system needs a different interactive backend (e.g. `TkAgg`, `Qt5Agg`).
 
 The **csv** option additionally writes the observed, trend, seasonal and
 residual components per date, so they can be replotted or analysed in your
-software tool of choice. With **zone** and **-d**, the dispersion band is
-included too: a `sd` column for `statistic=mean`, or `first_quartile`/
-`third_quartile` columns for `statistic=median`. With the **-e** flag, the
-seasonal amplitude envelope is included as `seasonal_lower`/`seasonal_upper`
+software tool of choice. With **zone** or **raster** and **-d**, the
+dispersion band is included too: a `sd` column for `statistic=mean`, or `first_quartile`/
+`third_quartile` columns for `statistic=median`. With **seasonal_envelope**,
+the seasonal amplitude envelope is included as `seasonal_lower`/`seasonal_upper`
 columns.
 
 The **vector** option creates a point vector layer carrying the trend
 regression results (OLS slope, R², *p*-value, Theil-Sen slope, Mann-Kendall
 tau and *p*-value) as attributes. When a monotone GAM was fitted (**-g**), its
 net change and explained deviance are stored as well. With **coordinates**
-the point is at the selected location; with **zone** it is placed at the
-center of the zone's bounding box (a tag for the location, not a geometry
-derived from the zone itself).
+the point is at the selected location; with **zone** or **raster** it is
+placed at the center of the zone's or raster's bounding box (a tag for the
+location, not a geometry derived from the area itself).
 
 ### Subsetting and performance
 
@@ -341,7 +385,8 @@ particular range of years.
 The **nprocs** option sets the number of parallel processes used during
 sampling: by *[t.rast.what](t.rast.what.md)* for a point (**coordinates**), or
 by *[t.rast.univar](t.rast.univar.md)*'s zonal extraction for an area
-(**zone**), potentially making the module substantially faster to run.
+(**zone** or **raster**), potentially making the module substantially faster
+to run.
 
 ## NOTES
 
@@ -519,7 +564,17 @@ values within the county varied at each timestep. For a statistic more
 resistant to outlier pixels, use `statistic=median` instead (the **-d** band
 then becomes the interquartile range); keep in mind this requires
 t.rast.univar's extended-statistics mode, which is more memory-intensive on
-large rasters than the `mean` default.
+large rasters than the `mean` default. `statistic=min`, `max` or
+`percentile` (with **percentile_value**) are also available, but **-d** is
+not meaningful with them and is rejected.
+
+A raster map can be used the same way with **raster**, pooling over its
+non-null cells instead of a vector map's features. For example, a forest mask
+(1 inside the forest, null outside):
+
+```sh
+t.rast.stl strds=tempmean raster=forest_mask -d output=t_rast_stl_raster.png
+```
 
 ### Compare two datasets
 

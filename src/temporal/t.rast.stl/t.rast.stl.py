@@ -43,7 +43,7 @@
 # %option G_OPT_M_COORDS
 # % required: no
 # % label: Point coordinates (east,north)
-# % description: Comma separated pair of map coordinates of the point to extract. In the GUI (launched from a Map Display) the value can be filled by clicking in the display. Mutually exclusive with 'zone'.
+# % description: Comma separated pair of map coordinates of the point to extract. In the GUI (launched from a Map Display) the value can be filled by clicking in the display. Mutually exclusive with 'zone' and 'raster'.
 # % guisection: Input
 # %end
 
@@ -51,7 +51,15 @@
 # % key: zone
 # % required: no
 # % label: Vector map defining the sampling area
-# % description: Vector map (points, lines or polygons) defining the sampling area. All features in the map are rasterized and pooled into a single sample; use v.extract beforehand to pre-select a subset of features. Mutually exclusive with 'coordinates'.
+# % description: Vector map (points, lines or polygons) defining the sampling area. All features in the map are rasterized and pooled into a single sample; use v.extract beforehand to pre-select a subset of features. Mutually exclusive with 'coordinates' and 'raster'.
+# % guisection: Input
+# %end
+
+# %option G_OPT_R_INPUT
+# % key: raster
+# % required: no
+# % label: Raster map defining the sampling area
+# % description: Raster map whose non-null cells define the sampling area; cell values are ignored. All non-null cells are pooled into a single sample. Mutually exclusive with 'coordinates' and 'zone'.
 # % guisection: Input
 # %end
 
@@ -59,9 +67,19 @@
 # % key: statistic
 # % type: string
 # % label: Pixel aggregation statistic
-# % description: Statistic used to summarize the pixels within 'zone' at each timestep. 'mean' uses a single, cheap t.rast.univar call. 'median' is more robust to outlier/contaminated pixels but requires t.rast.univar's extended-statistics mode, which sorts all cell values in memory for each map; this is a real memory cost on very large rasters.
-# % options: mean,median
+# % description: Statistic used to summarize the pixels within 'zone'/'raster' at each timestep. 'mean', 'min' and 'max' use a single, cheap t.rast.univar call. 'median' and 'percentile' are more robust to outlier/contaminated pixels but require t.rast.univar's extended-statistics mode, which sorts all cell values in memory for each map; this is a real memory cost on very large rasters.
+# % options: mean,median,min,max,percentile
 # % answer: mean
+# % required: no
+# % guisection: Input
+# %end
+
+# %option
+# % key: percentile_value
+# % type: double
+# % label: Percentile to use as the statistic
+# % description: Percentile (0-100) summarizing the pixels within 'zone'/'raster' at each timestep. Only used when 'statistic' is 'percentile'.
+# % options: 0-100
 # % required: no
 # % guisection: Input
 # %end
@@ -100,6 +118,24 @@
 # % type: integer
 # % label: Interpolation order
 # % description: Order for the spline/polynomial interpolation methods (ignored otherwise).
+# % required: no
+# % guisection: Regularization
+# %end
+
+# %option
+# % key: temporal_outliers
+# % type: string
+# % label: Temporal-outlier filter for 'strds'
+# % description: 'threshold,window' flags and excludes isolated, transient excursions before the analysis, tracking a running peak (or trough) and following the signal away from it, the same running-extremum approach t.rast.event uses to detect disturbance/recovery events. A descent (or ascent) is confirmed, and its entire span excluded, once it has moved at least 'threshold' away from that running reference (in the data's own units, e.g. 0.3 NDVI units) and the series is then seen to come back close to the reference again, within 'window' of leaving it (calendar days for absolute time, time steps for relative time) -- as opposed to a genuine, sustained change, which is left untouched. The removed values are dropped before STL/trend, filled in like any other gap, and still marked on the Observed panel. See the manual for the full rule.
+# % required: no
+# % guisection: Regularization
+# %end
+
+# %option
+# % key: temporal_outliers2
+# % type: string
+# % label: Temporal-outlier filter for 'strds2'
+# % description: Same as 'temporal_outliers', applied to 'strds2'.
 # % required: no
 # % guisection: Regularization
 # %end
@@ -336,14 +372,23 @@
 # %flag
 # % key: d
 # % label: Show pixel-value spread band
-# % description: Shade a band around the Observed series showing the spread of pixel values within 'zone' at each timestep: +/-1 standard deviation for the 'mean' statistic, or the interquartile range (25th-75th percentile) for the 'median' statistic. Only meaningful with 'zone'.
+# % description: Shade a band around the Observed series showing the spread of pixel values within 'zone'/'raster' at each timestep: +/-1 standard deviation for the 'mean' statistic, or the interquartile range (25th-75th percentile) for the 'median' statistic. Only valid with 'statistic=mean' or 'statistic=median'; only meaningful with 'zone' or 'raster'.
 # % guisection: Plotting
 # %end
 
 # %flag
 # % key: e
-# % label: Show seasonal amplitude envelope
-# % description: Draw the rolling min/max of the seasonal component (a centered window one seasonal period wide) on the Seasonal panel, showing how the seasonal amplitude changes over time. Independent of 'coordinates'/'zone'.
+# % label: Hide outlier markers
+# % description: Do not draw the markers for values excluded by 'temporal_outliers'/'temporal_outliers2' on the Observed panel (no effect if neither option is set, or none were excluded). The Observed panel's y-axis is then left to autoscale to the plotted (gap-filled) series only, instead of being stretched to also fit the hidden outlier values.
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: seasonal_envelope
+# % type: string
+# % label: Seasonal amplitude envelope percentile
+# % description: Draw a rolling envelope of the seasonal component (a centered window one seasonal period wide) on the Seasonal panel, showing how the seasonal amplitude changes over time. The value is the fraction trimmed from each end of the window before taking the envelope, e.g. '0.1' uses the 10th/90th percentile instead of the min/max, to avoid outliers dominating the envelope; '0' uses the plain min/max. Independent of 'coordinates'/'zone'/'raster'. Unset disables the envelope.
+# % required: no
 # % guisection: Plotting
 # %end
 
@@ -442,20 +487,21 @@
 
 
 # %option G_OPT_M_NPROCS
-# % description: Number of parallel processes. For a point ('coordinates') this has no effect. For an area ('zone') it is forwarded to t.rast.univar's zonal extraction.
+# % description: Number of parallel processes. For a point ('coordinates') this has no effect. For an area ('zone' or 'raster') it is forwarded to t.rast.univar's zonal extraction.
 # %end
 
 # %option G_OPT_T_WHERE
 # %end
 
 # %rules
-# % exclusive: coordinates, zone
-# % required: coordinates, zone
-# % requires: -d, zone
+# % exclusive: coordinates, zone, raster
+# % required: coordinates, zone, raster
+# % requires: -d, zone, raster
 # % requires: -b, -g
 # % requires: gam_direction, -g
 # % requires: -y, strds2
 # % requires: vlines_labels, vlines
+# % requires: temporal_outliers2, strds2
 # %end
 
 
@@ -672,6 +718,68 @@ def zone_bbox_center(zone):
     return (east, north)
 
 
+def validate_raster(raster):
+    """Check that the raster= map defining the sampling area exists.
+
+    :param str raster: name of the raster map (as given on the command line)
+    """
+    found = gs.find_file(name=raster, element="cell")
+    if not found.get("fullname"):
+        gs.fatal(_("Raster map '{}' not found.").format(raster))
+
+
+def make_raster_zone(raster):
+    """Turn raster= into a single-category zones raster for t.rast.univar.
+
+    Every non-null cell of raster= is burned to the same category value (1),
+    regardless of its actual value, so the strds is sampled as one pooled
+    zone over all non-null cells. The raster is registered in
+    ``clean_rasters`` for removal by cleanup().
+
+    Only isnull() is evaluated, so this costs the same for CELL, FCELL or
+    DCELL input; the cell type of raster= does not affect performance here.
+
+    :param str raster: name of the input raster map
+    :return str: name of the created zones raster
+    """
+    zone_raster = gs.tempname(12)
+    try:
+        gs.run_command(
+            "r.mapcalc",
+            expression=f"{zone_raster} = if(isnull({raster}), null(), 1)",
+            quiet=True,
+        )
+    except CalledModuleError:
+        gs.fatal(_("Could not derive the sampling area from raster '{}'.").format(raster))
+    clean_rasters.append(zone_raster)
+
+    stats = gs.parse_command("r.univar", flags="g", map=zone_raster)
+    if int(stats.get("n", 0)) == 0:
+        gs.fatal(
+            _(
+                "Raster '{}' has no non-null cells within the current "
+                "computational region; nothing to sample."
+            ).format(raster)
+        )
+    return zone_raster
+
+
+def raster_bbox_center(raster):
+    """Center of the raster= map's bounding box, for messages/tagging only.
+
+    This is not used for sampling (the actual sampling area is the non-null
+    cells, see make_raster_zone()); it is just a representative (east,
+    north) location for terminal messages and the optional 'vector' output.
+
+    :param str raster: name of the raster map
+    :return tuple: (east, north) as floats
+    """
+    info = gs.parse_command("r.info", flags="g", map=raster)
+    east = (float(info["east"]) + float(info["west"])) / 2.0
+    north = (float(info["north"]) + float(info["south"])) / 2.0
+    return (east, north)
+
+
 def find_column(header, name):
     """Return the index of a column named ``name`` in a pipe-table header.
 
@@ -799,7 +907,24 @@ def extract_series(strds, east, north, where, null_value="nan", nprocs=1):
     return (dates, values)
 
 
-def extract_zonal_series(strds, zone_raster, where, statistic, nprocs, want_dispersion):
+def percentile_column_name(value):
+    """Build the t.rast.univar column name for a percentile value.
+
+    Mirrors the string transform GRASS core's own
+    grass.temporal.univar_statistics uses to name percentile columns
+    (e.g. 90 -> 'percentile_90', 95.5 -> 'percentile_95_5'), so this stays
+    coupled to that naming and needs updating if it ever changes there.
+
+    :param float value: percentile value (0-100)
+    :return str: the matching t.rast.univar column name
+    """
+    token = str(float(value)).rstrip("0").rstrip(".").replace(".", "_")
+    return f"percentile_{token}"
+
+
+def extract_zonal_series(
+    strds, zone_raster, where, statistic, nprocs, want_dispersion, percentile_value=None
+):
     """Extract a (date, value) series pooled over a zone from an strds.
 
     A single t.rast.univar call (zones=zone_raster) covers every registered
@@ -807,19 +932,23 @@ def extract_zonal_series(strds, zone_raster, where, statistic, nprocs, want_disp
     row per timestep, the zonal equivalent of extract_series()'s one point
     per timestep.
 
-    'mean' uses the plain (non-extended) statistics, which already include
-    the standard deviation. 'median' requires t.rast.univar's extended-
-    statistics mode (-e), which also yields the first/third quartiles used
-    for the dispersion band, at no extra cost. Extended statistics sort all
-    cell values in memory per map, a real cost on very large rasters.
+    'mean', 'min' and 'max' use the plain (non-extended) statistics, which
+    already include the standard deviation and the min/max columns. 'median'
+    and 'percentile' require t.rast.univar's extended-statistics mode (-e);
+    for 'median' this also yields the first/third quartiles used for the
+    dispersion band, at no extra cost. Extended statistics sort all cell
+    values in memory per map, a real cost on very large rasters.
 
     :param str strds: name of the input space-time raster dataset
     :param str zone_raster: name of the (single-category) zones raster
     :param str where: optional t.* WHERE clause to subset maps
-    :param str statistic: 'mean' or 'median'
+    :param str statistic: 'mean', 'median', 'min', 'max' or 'percentile'
     :param int nprocs: number of parallel processes for t.rast.univar
     :param bool want_dispersion: also return the lower/upper dispersion band
-        (mean +/- stddev, or the first/third quartile for median)
+        (mean +/- stddev, or the first/third quartile for median); only
+        valid with statistic 'mean' or 'median'
+    :param float|None percentile_value: percentile (0-100) to use when
+        statistic is 'percentile'; ignored otherwise
 
     :return tuple: (dates, values, lower, upper) where lower/upper are lists
         of float/None (same length as dates), or (None, None) when
@@ -832,6 +961,15 @@ def extract_zonal_series(strds, zone_raster, where, statistic, nprocs, want_disp
     if statistic == "median":
         flags = "e"
         kwargs["percentile"] = 50
+        value_name = "median"
+    elif statistic == "percentile":
+        flags = "e"
+        kwargs["percentile"] = percentile_value
+        value_name = percentile_column_name(percentile_value)
+    elif statistic in ("min", "max"):
+        value_name = statistic
+    else:
+        value_name = "mean"
 
     try:
         raw = gs.read_command("t.rast.univar", flags=flags, **kwargs)
@@ -850,7 +988,6 @@ def extract_zonal_series(strds, zone_raster, where, statistic, nprocs, want_disp
 
     header = lines[0].split("|")
     start_idx = find_column(header, "start")
-    value_name = "mean" if statistic == "mean" else "median"
     value_idx = find_column(header, value_name)
     if start_idx is None or value_idx is None:
         gs.fatal(
@@ -968,6 +1105,155 @@ def parse_vlines(vlines_opt, labels_opt, temporal_type):
     if not labels:
         labels = [None] * len(positions)
     return list(zip(positions, labels))
+
+
+def parse_temporal_outliers(value, key):
+    """Parse a 'temporal_outliers'/'temporal_outliers2' option into
+    (threshold, window).
+
+    :param str value: the option value, e.g. '0.3,15'; may be empty.
+    :param str key: option name, used in error messages.
+    :return tuple|None: (threshold, window), both positive floats, for
+        detect_temporal_outliers(); or None if value is empty (the filter
+        is disabled).
+    """
+    if not value:
+        return None
+    parts = value.split(",")
+    if len(parts) != 2:
+        gs.fatal(_("The '{}' option must be 'threshold,window'.").format(key))
+    try:
+        threshold, window = (float(p.strip()) for p in parts)
+    except ValueError:
+        gs.fatal(
+            _("Could not parse '{}' value '{}' as two numbers.").format(key, value)
+        )
+    if threshold <= 0 or window <= 0:
+        gs.fatal(_("Both values of '{}' must be positive numbers.").format(key))
+    return threshold, window
+
+
+def _find_excursions(values, offsets, threshold, window):
+    """Find confirmed descend-then-rise excursions via a running peak/trough.
+
+    The GRASS addon t.rast.event detects disturbance/recovery events in a
+    strds the same way (tracking a running peak and following the signal
+    down until it turns back up); this is that same running-peak idea,
+    scoped down from t.rast.event's full event-recovery analysis to the
+    yes/no "is this an isolated excursion" question this filter needs.
+
+    A running peak tracks the highest value seen since the last confirmed
+    excursion (or the series start). Once the series turns below it, every
+    following point is tentatively "in descent": the running trough extends
+    as the decline continues, however many observations that takes. The
+    descent is confirmed -- and its interior points (between the peak and
+    the point that comes back near it) are returned as the excursion -- once
+    some later point returns to within half of ``threshold`` of the peak
+    *and* the peak-to-trough drop reached ``threshold``. Unlike comparing
+    each point to a fixed-size window (of several observations, or of just
+    the nearest one), the peak stays pinned at the pre-excursion level for
+    as long as the descent continues, so neither the excursion's own
+    interior points nor the ordinary point where it ends up get judged
+    against a baseline contaminated by the excursion itself.
+
+    A descent still unconfirmed after ``window`` (measured from the peak) is
+    abandoned without flagging anything, on the assumption it may be a
+    genuine, sustained change rather than a transient artefact; the running
+    peak then restarts from that point. This also means the series' final
+    open descent, if any, is never flagged, since it never got the chance to
+    confirm.
+
+    :param numpy.ndarray values: observation values, in time order
+    :param numpy.ndarray offsets: matching time offsets (days or steps)
+    :param float threshold: minimum peak-to-trough drop to confirm
+    :param float window: maximum time from the peak for the descent to
+        confirm before it is abandoned as not transient
+    :return numpy.ndarray: boolean mask (same length as ``values``) of
+        confirmed excursion-interior points
+    """
+    n = len(values)
+    excluded = np.zeros(n, dtype=bool)
+
+    in_descent = False
+    peak_val = values[0]
+    peak_idx = 0
+    trough_val = None
+    descent_indices = []
+
+    for i in range(1, n):
+        if not in_descent:
+            if values[i] >= peak_val:
+                # Refresh peak_idx even on a tie, so a long flat run before a
+                # descent doesn't leave window measured from a stale, much
+                # earlier peak than the level actually just held.
+                peak_val, peak_idx = values[i], i
+            else:
+                in_descent = True
+                trough_val = values[i]
+                descent_indices = [i]
+            continue
+
+        if offsets[i] - offsets[peak_idx] > window:
+            # Taking too long to confirm: not an isolated excursion.
+            in_descent = False
+            peak_val, peak_idx = values[i], i
+            descent_indices = []
+            continue
+
+        trough_val = min(trough_val, values[i])
+        if values[i] >= peak_val - 0.5 * threshold:
+            # Back near the peak: confirm the excursion if it was deep
+            # enough, then restart peak tracking fresh from here.
+            if peak_val - trough_val >= threshold:
+                excluded[descent_indices] = True
+            in_descent = False
+            peak_val, peak_idx = values[i], i
+            descent_indices = []
+        else:
+            descent_indices.append(i)
+
+    return excluded
+
+
+def detect_temporal_outliers(series, threshold, window, temporal_type="absolute"):
+    """Flag isolated spikes/dips that revert within a short time window.
+
+    A quality-control filter for transient artefacts (sensor noise, cloud
+    contamination, a single bad pixel), not a general outlier remover: see
+    ``_find_excursions()`` for how an excursion is confirmed. Dips and
+    spikes are both covered by running that same peak/trough logic twice,
+    once on the series and once negated (so a "descent" in the negated
+    series is a rise in the real one); a deviation that is never confirmed
+    to revert within ``window`` -- including a genuine, sustained change --
+    is left untouched in both directions.
+
+    :param pandas.Series series: irregular point series, before regularize()
+    :param float threshold: minimum peak-to-trough deviation to flag an
+        excursion, in the data's own units
+    :param float window: maximum time, from the start of an excursion, for
+        it to confirm before being treated as not transient, in calendar
+        days (absolute time) or index steps (relative time)
+    :param str temporal_type: 'absolute' or 'relative'
+    :return tuple: (cleaned_series, excluded_series); excluded_series holds
+        just the confirmed outliers (empty if none were found)
+    """
+    valid = series.dropna()
+    if len(valid) < 3:
+        return series, series.iloc[0:0]
+
+    if temporal_type == "relative":
+        offsets = valid.index.to_numpy(dtype="float64")
+    else:
+        offsets = (valid.index - valid.index[0]) / pd.Timedelta(days=1)
+        offsets = offsets.to_numpy(dtype="float64")
+    values = valid.to_numpy(dtype="float64")
+
+    dips = _find_excursions(values, offsets, threshold, window)
+    spikes = _find_excursions(-values, offsets, threshold, window)
+    excluded_mask = dips | spikes
+
+    excluded = valid[excluded_mask]
+    return series.mask(series.index.isin(excluded.index)), excluded
 
 
 def resolve_relative_step(series, step_opt, tinfo):
@@ -1559,17 +1845,17 @@ def write_csv(
     added as extra columns named for what they actually are: 'sd' for the
     mean statistic's +/-1 standard deviation half-width, or
     'first_quartile'/'third_quartile' for the median statistic's IQR bounds.
-    When a seasonal envelope is given (the -e flag), it is added as
-    'seasonal_lower'/'seasonal_upper' columns.
+    When a seasonal envelope is given (the seasonal_envelope= option), it is
+    added as 'seasonal_lower'/'seasonal_upper' columns.
 
     :param dict|None band_lower: regularized lower-band Series, or None
     :param dict|None band_upper: regularized upper-band Series, or None
     :param str|None statistic: 'mean' or 'median' (selects the column
         naming for the band); ignored when no band is given
-    :param pandas.Series|None envelope_lower: rolling min of the seasonal
-        component, or None
-    :param pandas.Series|None envelope_upper: rolling max of the seasonal
-        component, or None
+    :param pandas.Series|None envelope_lower: rolling envelope lower bound of
+        the seasonal component, or None
+    :param pandas.Series|None envelope_upper: rolling envelope upper bound of
+        the seasonal component, or None
     """
     columns = {
         "observed": result.observed,
@@ -1915,6 +2201,23 @@ def trend_color_family(base_color):
     }
 
 
+def lighten_color(base_color, amount=0.55):
+    """Lighten a colour toward white, for markers meant to recede from the
+    main series line (excluded/outlier points: same hue, but visibly not
+    part of the plotted line).
+
+    :param str base_color: any matplotlib colour spec (name or hex)
+    :param float amount: fraction (0-1) of the way from the base colour's
+        lightness to white
+    :return str: hex colour
+    """
+    r, g, b = mpl.colors.to_rgb(base_color)
+    h, light, s = colorsys.rgb_to_hls(r, g, b)
+    light = light + (1 - light) * amount
+    rr, gg, bb = colorsys.hls_to_rgb(h, min(1.0, light), s)
+    return mpl.colors.to_hex((rr, gg, bb))
+
+
 def draw_trend_lines(
     ax,
     comp,
@@ -2055,6 +2358,8 @@ def plot_result(
     envelope_upper=None,
     envelope_lower2=None,
     envelope_upper2=None,
+    excluded=None,
+    excluded2=None,
     vlines=None,
 ):
     """Build the multi-panel STL plot, in the style of R's plot(stl(...)).
@@ -2103,14 +2408,23 @@ def plot_result(
     :param pandas.Series|None band_upper2: upper bound for the second dataset.
     :param str|None band_label: legend label for the band (e.g. '± 1 SD' or
         'IQR (25-75%)').
-    :param pandas.Series|None envelope_lower: rolling min of the primary
-        dataset's seasonal component (the -e flag), aligned with
-        ``result.seasonal``'s index. Drawn on the Seasonal panel only.
-    :param pandas.Series|None envelope_upper: rolling max of that component.
-    :param pandas.Series|None envelope_lower2: rolling min for the second
-        dataset (when ``result2`` is given).
-    :param pandas.Series|None envelope_upper2: rolling max for the second
-        dataset.
+    :param pandas.Series|None envelope_lower: rolling envelope lower bound of
+        the primary dataset's seasonal component (the seasonal_envelope=
+        option), aligned with ``result.seasonal``'s index. Drawn on the
+        Seasonal panel only.
+    :param pandas.Series|None envelope_upper: rolling envelope upper bound of
+        that component.
+    :param pandas.Series|None envelope_lower2: rolling envelope lower bound
+        for the second dataset (when ``result2`` is given).
+    :param pandas.Series|None envelope_upper2: rolling envelope upper bound
+        for the second dataset.
+    :param pandas.Series|None excluded: primary dataset's values dropped by
+        the temporal_outliers= option (its own, irregular timestamps, not
+        aligned with ``result.observed``). Drawn as markers on the Observed
+        panel only, in a lighter shade of the series colour; excluded from
+        the line itself, having already been interpolated over before STL
+        ran.
+    :param pandas.Series|None excluded2: same, for the second dataset.
     :param list|None vlines: (position, label|None) pairs, position being a
         pandas.Timestamp (absolute time) or int (relative time), drawn as a
         dashed vertical reference line on every panel.
@@ -2127,6 +2441,10 @@ def plot_result(
     # / GAM within a dataset, while the colour family identifies the dataset.
     trend_colors1 = trend_color_family(color1)
     trend_colors2 = trend_color_family(color2)
+    # Excluded-value markers: same hue as the series, but lightened so they
+    # read as "not part of the line" rather than another data series.
+    excluded_color1 = lighten_color(color1)
+    excluded_color2 = lighten_color(color2)
     # A shared y-axis only makes sense with two datasets.
     shared_scale = have_second and same_yscale
 
@@ -2179,7 +2497,21 @@ def plot_result(
                 zorder=1,
                 label=band_label + (" ({})".format(label1) if have_second else ""),
             )
-            if not have_second:
+        if label == "Observed" and excluded is not None and len(excluded):
+            ax.scatter(
+                excluded.index,
+                excluded.values,
+                color=excluded_color1,
+                s=16,
+                zorder=3,
+                label=_("Excluded outlier")
+                + (" ({})".format(label1) if have_second else ""),
+            )
+        if label == "Observed" and not have_second:
+            # Single-dataset: legend only appears when there's something to
+            # name (the dispersion band and/or excluded-value markers); the
+            # plain series line itself carries no label.
+            if ax.get_legend_handles_labels()[0]:
                 ax.legend(loc="best", fontsize=legend_fontsize, frameon=False)
         if (
             label == "Seasonal"
@@ -2265,6 +2597,15 @@ def plot_result(
                     zorder=1,
                     label=band_label + " ({})".format(label2),
                 )
+            if label == "Observed" and excluded2 is not None and len(excluded2):
+                ax2.scatter(
+                    excluded2.index,
+                    excluded2.values,
+                    color=excluded_color2,
+                    s=16,
+                    zorder=3,
+                    label=_("Excluded outlier") + " ({})".format(label2),
+                )
             if (
                 label == "Seasonal"
                 and envelope_lower2 is not None
@@ -2343,8 +2684,9 @@ def plot_result(
         ax.margins(x=0.01)
 
     # A single legend identifying the two datasets, on the Observed panel when
-    # it is drawn, otherwise on the first panel. Any dispersion-band patches
-    # drawn on that panel (via their own 'label=') are picked up alongside.
+    # it is drawn, otherwise on the first panel. Any dispersion-band or
+    # excluded-value handles drawn on that panel (via their own 'label=') are
+    # picked up alongside.
     if have_second:
         observed_ax = next(
             (ax for ax, (label, *_) in zip(axes, panels) if label == "Observed"),
@@ -2441,6 +2783,9 @@ def validate_options(options, flags, temporal_type):
       * spline / polynomial interpolation requires 'order'
       * a relative-time 'step' override is a positive integer
       * an absolute-time 'frequency' is a valid pandas offset alias
+      * temporal_outliers/temporal_outliers2 parse as 'threshold,window'
+      * statistic=percentile requires percentile_value
+      * the -d (dispersion band) flag only applies to statistic=mean/median
 
     Data-dependent checks (period vs. length, gaps after interpolation, etc.)
     are intentionally left to run later, once the series is available.
@@ -2450,6 +2795,23 @@ def validate_options(options, flags, temporal_type):
         pygam availability check)
     :param str temporal_type: 'absolute' or 'relative' (from t.info)
     """
+    # statistic=percentile needs an explicit percentile_value; the dispersion
+    # band (-d) has no natural paired spread value outside mean/median, so it
+    # is restricted to those two statistics rather than silently showing a
+    # misleading band.
+    statistic = options["statistic"]
+    if statistic == "percentile" and not options["percentile_value"]:
+        gs.fatal(
+            _("The 'percentile_value' option is required when 'statistic' is 'percentile'.")
+        )
+    if flags["d"] and statistic not in ("mean", "median"):
+        gs.fatal(
+            _(
+                "The '-d' flag (pixel-value spread band) is only meaningful "
+                "with 'statistic=mean' or 'statistic=median'."
+            )
+        )
+
     # STL LOESS window lengths: odd integers, each with its own minimum.
     validate_odd_window(options["seasonal"], "seasonal", 7)
     validate_odd_window(options["trend"], "trend", 3)
@@ -2499,6 +2861,11 @@ def validate_options(options, flags, temporal_type):
                     "bare number is not accepted."
                 ).format(v=options["frequency"])
             )
+
+    # temporal_outliers / temporal_outliers2, when given, must parse as
+    # 'threshold,window'.
+    parse_temporal_outliers(options["temporal_outliers"], "temporal_outliers")
+    parse_temporal_outliers(options["temporal_outliers2"], "temporal_outliers2")
 
     # Line colours, when given, must be valid GRASS colour specs that map to a
     # colour matplotlib understands (a named colour or an R:G:B[:A] triplet).
@@ -2550,7 +2917,7 @@ def decompose_and_fit(
     step=None,
     slope_unit="auto",
     label=None,
-    show_envelope=False,
+    envelope_percentile=None,
 ):
     """Run STL and the trend regressions on one regularized series, with reporting.
 
@@ -2575,14 +2942,18 @@ def decompose_and_fit(
         reporting-unit conversion
     :param str slope_unit: the slope_unit= option ('auto','step','day',...)
     :param str|None label: dataset name used to prefix messages (or None)
-    :param bool show_envelope: also compute the seasonal amplitude envelope
-        (rolling min/max of the seasonal component over one period), for the
-        -e flag
+    :param float|None envelope_percentile: also compute the seasonal
+        amplitude envelope (a centered rolling window one period wide over
+        the seasonal component), for the seasonal_envelope= option. The
+        value is the fraction trimmed from each end of the window, e.g. 0.1
+        for the 10th/90th percentile, or 0 for the plain min/max. None
+        disables the envelope.
 
     :return tuple: (result, trend_fit, envelope_lower, envelope_upper) where
         result is the STL fit, trend_fit is the dict from fit_trend() (or
-        None), and envelope_lower/envelope_upper are the rolling min/max of
-        the seasonal component (or None, None when show_envelope is False)
+        None), and envelope_lower/envelope_upper are the rolling envelope of
+        the seasonal component (or None, None when envelope_percentile is
+        None)
     """
     prefix = "[{}] ".format(label) if label else ""
 
@@ -2722,15 +3093,20 @@ def decompose_and_fit(
                 )
             )
 
-    # Seasonal amplitude envelope: a rolling min/max of the seasonal component
-    # over a window one period wide, showing how the amplitude of the
-    # seasonal cycle itself changes over time. Centered, so it needs a full
-    # window on both sides; the first/last half-period are left as gaps
-    # (NaN) rather than padded with a partial, less meaningful extremum.
+    # Seasonal amplitude envelope: a rolling envelope of the seasonal
+    # component over a window one period wide, showing how the amplitude of
+    # the seasonal cycle itself changes over time. envelope_percentile trims
+    # that fraction off each end of the window instead of taking the plain
+    # min/max, so a handful of outlier years don't dominate the envelope;
+    # quantile(0)/quantile(1) are exactly the min/max, so 0 reproduces that
+    # plain envelope. Centered, so it needs a full window on both sides; the
+    # first/last half-period are left as gaps (NaN) rather than computed
+    # from a partial, less meaningful window.
     envelope_lower = envelope_upper = None
-    if show_envelope:
-        envelope_upper = result.seasonal.rolling(window=period, center=True).max()
-        envelope_lower = result.seasonal.rolling(window=period, center=True).min()
+    if envelope_percentile is not None:
+        roll = result.seasonal.rolling(window=period, center=True)
+        envelope_upper = roll.quantile(1 - envelope_percentile)
+        envelope_lower = roll.quantile(envelope_percentile)
 
     return result, trend_fit, envelope_lower, envelope_upper
 
@@ -2742,7 +3118,9 @@ def main(options, flags):
     backend_opt = options["backend"]
     coordinates = options["coordinates"]
     zone = options["zone"]
+    raster = options["raster"]
     statistic = options["statistic"]
+    percentile_value = float(options["percentile_value"]) if options["percentile_value"] else None
     strds = options["strds"]
     strds2 = options["strds2"]
     where = options["where"]
@@ -2769,6 +3147,11 @@ def main(options, flags):
     plot_dimensions = options["plot_dimensions"]
     plots = [p for p in options["plots"].split(",") if p] if options["plots"] else []
     dpi = float(options["dpi"]) if options["dpi"] else 300
+    envelope_percentile = None
+    if options["seasonal_envelope"]:
+        envelope_percentile = float(options["seasonal_envelope"])
+        if not 0 <= envelope_percentile < 0.5:
+            gs.fatal(_("The 'seasonal_envelope' option must be >= 0 and < 0.5."))
 
     robust = flags["r"]
     show_ols = flags["o"]
@@ -2778,7 +3161,7 @@ def main(options, flags):
     show_stats = flags["t"]
     same_yscale = flags["y"]
     show_dispersion = flags["d"]
-    show_envelope = flags["e"]
+    hide_outliers = flags["e"]
     line_color = grass_color_to_mpl(options["color"]) if options["color"] else None
     line_color2 = grass_color_to_mpl(options["color2"]) if options["color2"] else None
     fontsize = float(options["fontsize"]) if options["fontsize"] else None
@@ -2796,7 +3179,8 @@ def main(options, flags):
     apply_style(options["style"])
 
     # Get the sampling location: either a point, or a zone rasterized from a
-    # vector map (all its features pooled into a single zone).
+    # vector map, or a zone taken from a raster's non-null cells (all pooled
+    # into a single zone).
     zone_raster = None
     if zone:
         validate_zone(zone)
@@ -2805,6 +3189,16 @@ def main(options, flags):
         gs.message(
             _("Using zone '{}' ({} statistic; bbox center for tagging: "
               "east={}, north={}).").format(zone, statistic, east, north)
+        )
+    elif raster:
+        validate_raster(raster)
+        zone_raster = make_raster_zone(raster)
+        east, north = raster_bbox_center(raster)
+        gs.message(
+            _("Using raster '{}' non-null cells ({} statistic; bbox center "
+              "for tagging: east={}, north={}).").format(
+                raster, statistic, east, north
+            )
         )
     else:
         east, north = coords_from_option(coordinates)
@@ -2861,6 +3255,7 @@ def main(options, flags):
     results = []
     bands = []
     envelopes = []
+    excluded_points = []
     for index, (ds_name, ds_tinfo) in enumerate(datasets):
         label = (strds2 and ds_name) or None
         if zone_raster:
@@ -2877,6 +3272,7 @@ def main(options, flags):
                 statistic=statistic,
                 nprocs=nprocs,
                 want_dispersion=show_dispersion,
+                percentile_value=percentile_value,
             )
         else:
             if index == 0:
@@ -2909,6 +3305,25 @@ def main(options, flags):
                 ).format(ds_name)
             )
 
+        outliers_key = "temporal_outliers" if index == 0 else "temporal_outliers2"
+        ds_outliers = parse_temporal_outliers(options[outliers_key], outliers_key)
+        if ds_outliers is not None:
+            ds_threshold, ds_window = ds_outliers
+            ds_series, ds_excluded = detect_temporal_outliers(
+                ds_series, ds_threshold, ds_window, temporal_type=temporal_type
+            )
+        else:
+            ds_excluded = ds_series.iloc[0:0]
+        if len(ds_excluded):
+            gs.message(
+                _(
+                    "Flagged {n} value(s) in '{d}' as transient temporal "
+                    "outliers (threshold={t}, window={w}); treated as gaps "
+                    "and interpolated."
+                ).format(n=len(ds_excluded), d=ds_name, t=ds_threshold, w=ds_window)
+            )
+        excluded_points.append(ds_excluded)
+
         gs.message(_("Regularizing the series and interpolating gaps..."))
         ds_regular = regularize(
             series=ds_series,
@@ -2925,8 +3340,18 @@ def main(options, flags):
         # through decompose_and_fit()/STL.
         ds_band_lower = ds_band_upper = None
         if ds_lower is not None:
+            ds_lower_series = build_series(ds_dates, ds_lower, temporal_type=temporal_type)
+            ds_upper_series = build_series(ds_dates, ds_upper, temporal_type=temporal_type)
+            if len(ds_excluded):
+                # Blank the band at the same dates excluded from the main
+                # series, so it is interpolated through them too instead of
+                # still showing the raw (possibly contaminated) pixel spread
+                # at a timestep the series itself no longer shows as data.
+                excluded_dates = ds_lower_series.index.isin(ds_excluded.index)
+                ds_lower_series = ds_lower_series.mask(excluded_dates)
+                ds_upper_series = ds_upper_series.mask(excluded_dates)
             ds_band_lower = regularize(
-                series=build_series(ds_dates, ds_lower, temporal_type=temporal_type),
+                series=ds_lower_series,
                 frequency=frequency,
                 method=interpolation,
                 order=order,
@@ -2935,7 +3360,7 @@ def main(options, flags):
                 tinfo=ds_tinfo,
             )
             ds_band_upper = regularize(
-                series=build_series(ds_dates, ds_upper, temporal_type=temporal_type),
+                series=ds_upper_series,
                 frequency=frequency,
                 method=interpolation,
                 order=order,
@@ -2960,7 +3385,7 @@ def main(options, flags):
             step=step,
             slope_unit=slope_unit,
             label=label,
-            show_envelope=show_envelope,
+            envelope_percentile=envelope_percentile,
         )
         results.append((ds_result, ds_trend_fit))
         envelopes.append((ds_envelope_lower, ds_envelope_upper))
@@ -2974,6 +3399,11 @@ def main(options, flags):
         band_label = _("± 1 SD") if statistic == "mean" else _("IQR (25-75%)")
     envelope_lower, envelope_upper = envelopes[0]
     envelope_lower2, envelope_upper2 = envelopes[1] if len(envelopes) > 1 else (None, None)
+    if hide_outliers:
+        excluded = excluded2 = None
+    else:
+        excluded = excluded_points[0]
+        excluded2 = excluded_points[1] if len(excluded_points) > 1 else None
 
     # Write CSV if requested
     if csv:
@@ -3035,6 +3465,8 @@ def main(options, flags):
         envelope_upper=envelope_upper,
         envelope_lower2=envelope_lower2,
         envelope_upper2=envelope_upper2,
+        excluded=excluded,
+        excluded2=excluded2,
         vlines=vlines,
     )
 

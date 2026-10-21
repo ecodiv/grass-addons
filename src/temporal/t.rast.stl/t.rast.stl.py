@@ -311,7 +311,7 @@
 # % options: none,0.1,0.25,0.5,1
 # % answer: none
 # % required: no
-# % guisection: STL
+# % guisection: Trend line
 # %end
 
 # %option
@@ -380,6 +380,15 @@
 # % key: e
 # % label: Hide outlier markers
 # % description: Do not draw the markers for values excluded by 'temporal_outliers'/'temporal_outliers2' on the Observed panel (no effect if neither option is set, or none were excluded). The Observed panel's y-axis is then left to autoscale to the plotted (gap-filled) series only, instead of being stretched to also fit the hidden outlier values.
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: min_pixels
+# % type: integer
+# % label: Minimum pixel count for the spread band
+# % description: At timesteps where fewer than this many non-null pixels contributed to the 'zone'/'raster' statistic, the spread band (-d) is left out and interpolated like any other gap, instead of plotting it. A standard deviation or interquartile range estimated from very few pixels is unreliable and can spike far beyond the genuine spread, most visibly on near-total-cloud timesteps where only a handful of pixels survive. Only meaningful with -d.
+# % required: no
 # % guisection: Plotting
 # %end
 
@@ -497,6 +506,7 @@
 # % exclusive: coordinates, zone, raster
 # % required: coordinates, zone, raster
 # % requires: -d, zone, raster
+# % requires: min_pixels, -d
 # % requires: -b, -g
 # % requires: gam_direction, -g
 # % requires: -y, strds2
@@ -950,9 +960,12 @@ def extract_zonal_series(
     :param float|None percentile_value: percentile (0-100) to use when
         statistic is 'percentile'; ignored otherwise
 
-    :return tuple: (dates, values, lower, upper) where lower/upper are lists
-        of float/None (same length as dates), or (None, None) when
-        want_dispersion is False
+    :return tuple: (dates, values, lower, upper, pixel_counts) where
+        lower/upper/pixel_counts are lists of float/int/None (same length as
+        dates), or (None, None, None) for the three when want_dispersion is
+        False. pixel_counts is the 'non_null_cells' t.rast.univar reported
+        for each timestep, the sample size the dispersion statistic at that
+        timestep was computed from.
     """
     kwargs = {"input": strds, "zones": zone_raster, "nprocs": nprocs}
     if where:
@@ -997,7 +1010,7 @@ def extract_zonal_series(
             ).format(value_name)
         )
 
-    lower_idx = upper_idx = None
+    lower_idx = upper_idx = count_idx = None
     if want_dispersion:
         if statistic == "mean":
             lower_idx = find_column(header, "stddev")
@@ -1012,12 +1025,14 @@ def extract_zonal_series(
                     "band in t.rast.univar output."
                 )
             )
+        count_idx = find_column(header, "non_null_cells")
 
     dates = []
     values = []
     lowers = [] if want_dispersion else None
     uppers = [] if want_dispersion else None
-    width = max(start_idx, value_idx, lower_idx or 0, upper_idx or 0) + 1
+    counts = [] if want_dispersion else None
+    width = max(start_idx, value_idx, lower_idx or 0, upper_idx or 0, count_idx or 0) + 1
     for ln in lines[1:]:
         cols = ln.split("|")
         if len(cols) < width:
@@ -1037,10 +1052,12 @@ def extract_zonal_series(
             else:
                 lowers.append(parse_zonal_token(cols[lower_idx]))
                 uppers.append(parse_zonal_token(cols[upper_idx]))
+            count = parse_zonal_token(cols[count_idx]) if count_idx is not None else None
+            counts.append(int(count) if count is not None else None)
 
     if not dates:
         gs.fatal(_("Could not parse any timesteps from t.rast.univar output."))
-    return (dates, values, lowers, uppers)
+    return (dates, values, lowers, uppers, counts)
 
 
 def build_series(dates, values, temporal_type="absolute"):
@@ -1244,8 +1261,10 @@ def detect_temporal_outliers(series, threshold, window, temporal_type="absolute"
     if temporal_type == "relative":
         offsets = valid.index.to_numpy(dtype="float64")
     else:
-        offsets = (valid.index - valid.index[0]) / pd.Timedelta(days=1)
-        offsets = offsets.to_numpy(dtype="float64")
+        # .total_seconds() (not '/ pd.Timedelta(days=1)') avoids a NumPy
+        # timedelta64 'generic' unit deprecation warning on some pandas/NumPy
+        # combinations.
+        offsets = (valid.index - valid.index[0]).total_seconds().to_numpy() / 86400.0
     values = valid.to_numpy(dtype="float64")
 
     dips = _find_excursions(values, offsets, threshold, window)
@@ -1290,7 +1309,14 @@ def resolve_relative_step(series, step_opt, tinfo):
 
 
 def regularize(
-    series, frequency, method, order, temporal_type="absolute", step=None, tinfo=None
+    series,
+    frequency,
+    method,
+    order,
+    temporal_type="absolute",
+    step=None,
+    tinfo=None,
+    report=True,
 ):
     """Resample onto a regular axis and interpolate gaps.
 
@@ -1310,6 +1336,9 @@ def regularize(
     :param str temporal_type: 'absolute' or 'relative'
     :param str|None step: relative-time step override (option value)
     :param dict|None tinfo: parsed t.info -g output (relative granularity)
+    :param bool report: print the inferred-frequency message when 'frequency'
+        is unset. False for the dispersion-band's extra regularize() calls,
+        so the same inference isn't reported three times over for one dataset.
 
     :return pandas.Series: regular, gap-free series
     """
@@ -1363,6 +1392,10 @@ def regularize(
                     "be inferred. Please set the frequency option (e.g. 'MS', "
                     "'16D')."
                 )
+            )
+        if report:
+            gs.message(
+                _("Inferred a regular frequency of '{}' from the data.").format(inferred)
             )
         resampled = series.asfreq(inferred)
 
@@ -1552,6 +1585,26 @@ def effective_trend_window(period, seasonal, trend):
     seasonal = int(seasonal) if seasonal else 7
     raw = 1.5 * period / (1.0 - 1.5 / seasonal)
     win = int(np.ceil(raw))
+    if win % 2 == 0:
+        win += 1
+    return win
+
+
+def effective_low_pass_window(period, low_pass):
+    """Return the low-pass LOESS window length statsmodels actually uses.
+
+    When the user sets ``low_pass`` explicitly, that value is used.
+    Otherwise statsmodels defaults to the smallest odd integer greater than
+    ``period`` -- not exposed on the fitted STL object, same as the trend
+    window in effective_trend_window() above.
+
+    :param int period: seasonal period
+    :param low_pass: user low_pass window or falsy for the statsmodels default
+    :return int: the effective (odd) low-pass window length
+    """
+    if low_pass:
+        return int(low_pass)
+    win = period + 1
     if win % 2 == 0:
         win += 1
     return win
@@ -2786,6 +2839,7 @@ def validate_options(options, flags, temporal_type):
       * temporal_outliers/temporal_outliers2 parse as 'threshold,window'
       * statistic=percentile requires percentile_value
       * the -d (dispersion band) flag only applies to statistic=mean/median
+      * min_pixels, when given, is a positive integer
 
     Data-dependent checks (period vs. length, gaps after interpolation, etc.)
     are intentionally left to run later, once the series is available.
@@ -2811,6 +2865,8 @@ def validate_options(options, flags, temporal_type):
                 "with 'statistic=mean' or 'statistic=median'."
             )
         )
+    if options["min_pixels"] and int(options["min_pixels"]) < 1:
+        gs.fatal(_("The 'min_pixels' option must be a positive integer."))
 
     # STL LOESS window lengths: odd integers, each with its own minimum.
     validate_odd_window(options["seasonal"], "seasonal", 7)
@@ -2976,23 +3032,39 @@ def decompose_and_fit(
     )
     result = run_stl(series=regular, period=period, **stl_kwargs)
 
-    # Linear regression of the trend component.
-    # Optionally trim LOESS endpoints first.
-    if trend_trim and trend_trim != "none":
-        tw = effective_trend_window(
-            period, stl_kwargs.get("seasonal"), stl_kwargs.get("trend")
-        )
-        trim = int(round(float(trend_trim) * tw))
+    # Report the STL smoother windows the user left unset: statsmodels picks
+    # its own defaults for them internally, but doesn't expose what it chose
+    # on the fitted result, so this is the only way to show it.
+    if not stl_kwargs.get("seasonal"):
         gs.message(
-            _("{pre}Effective STL trend window: {w} observations.").format(
+            _("{pre}Using the default STL seasonal window of {w} observations.").format(
+                pre=prefix, w=7
+            )
+        )
+    tw = effective_trend_window(period, stl_kwargs.get("seasonal"), stl_kwargs.get("trend"))
+    if not stl_kwargs.get("trend"):
+        gs.message(
+            _("{pre}Estimated STL trend window: {w} observations.").format(
                 pre=prefix, w=tw
             )
         )
+    if not stl_kwargs.get("low_pass"):
+        lw = effective_low_pass_window(period, stl_kwargs.get("low_pass"))
+        gs.message(
+            _("{pre}Estimated STL low-pass window: {w} observations.").format(
+                pre=prefix, w=lw
+            )
+        )
+
+    # Linear regression of the trend component.
+    # Optionally trim LOESS endpoints first.
+    if trend_trim and trend_trim != "none":
+        trim = int(round(float(trend_trim) * tw))
         gs.message(
             _(
-                "{pre}Trend regression edge trim: {f} x trend window = {t} "
-                "observation(s) dropped from each end."
-            ).format(pre=prefix, f=trend_trim, t=trim)
+                "{pre}Trend regression edge trim: {f} x trend window ({w} "
+                "observations) = {t} observation(s) dropped from each end."
+            ).format(pre=prefix, f=trend_trim, w=tw, t=trim)
         )
     else:
         trim = 0
@@ -3162,6 +3234,7 @@ def main(options, flags):
     same_yscale = flags["y"]
     show_dispersion = flags["d"]
     hide_outliers = flags["e"]
+    min_pixels = int(options["min_pixels"]) if options["min_pixels"] else None
     line_color = grass_color_to_mpl(options["color"]) if options["color"] else None
     line_color2 = grass_color_to_mpl(options["color2"]) if options["color2"] else None
     fontsize = float(options["fontsize"]) if options["fontsize"] else None
@@ -3265,7 +3338,7 @@ def main(options, flags):
                 gs.message(
                     _("Extracting the zonal time series for '{}'...").format(ds_name)
                 )
-            ds_dates, ds_values, ds_lower, ds_upper = extract_zonal_series(
+            ds_dates, ds_values, ds_lower, ds_upper, ds_pixel_counts = extract_zonal_series(
                 strds=ds_name,
                 zone_raster=zone_raster,
                 where=where,
@@ -3288,7 +3361,7 @@ def main(options, flags):
                 where=where,
                 nprocs=nprocs,
             )
-            ds_lower = ds_upper = None
+            ds_lower = ds_upper = ds_pixel_counts = None
 
         ds_series = build_series(ds_dates, ds_values, temporal_type=temporal_type)
         n_valid = int(ds_series.notna().sum())
@@ -3318,10 +3391,23 @@ def main(options, flags):
             gs.message(
                 _(
                     "Flagged {n} value(s) in '{d}' as transient temporal "
-                    "outliers (threshold={t}, window={w}); treated as gaps "
-                    "and interpolated."
+                    "outliers (threshold={t}, window={w}); linearly "
+                    "interpolated."
                 ).format(n=len(ds_excluded), d=ds_name, t=ds_threshold, w=ds_window)
             )
+            # Fill just these dates with linear interpolation now, ahead of
+            # the 'interpolation' method below. An excursion can span many
+            # steps (up to 'window'), and a curvature-fitting method
+            # (quadratic, cubic, spline...) bridging a gap that wide can
+            # overshoot past either neighbour, undoing the whole point of
+            # excluding the outlier by replacing it with a different,
+            # possibly larger artifact. Linear is bounded by its two
+            # neighbours and cannot do that. Genuine gaps (still NaN here)
+            # are left for the chosen 'interpolation' method, unchanged.
+            linear_filled = ds_series.interpolate(
+                method="linear", limit_direction="both"
+            )
+            ds_series.loc[ds_excluded.index] = linear_filled.loc[ds_excluded.index]
         excluded_points.append(ds_excluded)
 
         gs.message(_("Regularizing the series and interpolating gaps..."))
@@ -3350,23 +3436,52 @@ def main(options, flags):
                 excluded_dates = ds_lower_series.index.isin(ds_excluded.index)
                 ds_lower_series = ds_lower_series.mask(excluded_dates)
                 ds_upper_series = ds_upper_series.mask(excluded_dates)
+            if min_pixels is not None and ds_pixel_counts is not None:
+                # A spread computed from very few pixels is a poor estimate
+                # and can spike far past the genuine spread -- typically a
+                # near-total-cloud timestep where only a handful of pixels
+                # survive -- even though the mean/median itself (and so
+                # temporal_outliers, which only watches that) looks normal.
+                ds_count_series = build_series(
+                    ds_dates, ds_pixel_counts, temporal_type=temporal_type
+                )
+                low_count_dates = ds_count_series < min_pixels
+                n_low_count = int(low_count_dates.sum())
+                if n_low_count:
+                    gs.message(
+                        _(
+                            "Spread band left out at {n} timestep(s) in '{d}' "
+                            "with fewer than {m} non-null pixels."
+                        ).format(n=n_low_count, d=ds_name, m=min_pixels)
+                    )
+                    ds_lower_series = ds_lower_series.mask(low_count_dates)
+                    ds_upper_series = ds_upper_series.mask(low_count_dates)
+            # Always interpolated linearly, regardless of 'interpolation': a
+            # curvature-fitting method (quadratic, cubic, spline...) can
+            # overshoot past either neighbour when bridging a gap, which for
+            # a dispersion band means manufacturing a bulge wider than the
+            # genuine spread on either side -- most visibly across the
+            # multi-step spans temporal_outliers excludes. Linear is bounded
+            # by its two neighbours and cannot do that.
             ds_band_lower = regularize(
                 series=ds_lower_series,
                 frequency=frequency,
-                method=interpolation,
-                order=order,
+                method="linear",
+                order=None,
                 temporal_type=temporal_type,
                 step=step,
                 tinfo=ds_tinfo,
+                report=False,
             )
             ds_band_upper = regularize(
                 series=ds_upper_series,
                 frequency=frequency,
-                method=interpolation,
-                order=order,
+                method="linear",
+                order=None,
                 temporal_type=temporal_type,
                 step=step,
                 tinfo=ds_tinfo,
+                report=False,
             )
         bands.append((ds_band_lower, ds_band_upper))
 

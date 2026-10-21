@@ -82,7 +82,18 @@ and `max` do not. The **-d** flag additionally shades a band around the
 Observed series showing the spread of pixel values at each timestep: ±1
 standard deviation for `mean`, or the interquartile range (25th-75th
 percentile) for `median`. It is only valid with `statistic=mean` or
-`statistic=median`.
+`statistic=median`. Gaps in the band (missing timesteps, or dates excluded by
+**temporal_outliers**) are always filled by linear interpolation, regardless
+of the **interpolation** option, so a curvature-fitting method chosen for the
+series itself cannot overshoot and bulge the band past its true local range.
+
+A standard deviation or interquartile range estimated from very few pixels is
+unreliable and can spike far past the genuine spread, typically on a
+near-total-cloud timestep where only a handful of pixels survive -- while the
+mean/median itself still looks normal, since it is a much less noise-sensitive
+statistic, so **temporal_outliers** will not catch it either. **min_pixels**
+guards against this: at timesteps with fewer non-null pixels than this, the
+band is left out there too and filled the same way as any other gap.
 
 ### Comparing two datasets
 
@@ -170,14 +181,18 @@ data, time steps for relative-time data). An observation is excluded only if
 it deviates from the median of neighbouring observations by at least
 **threshold** and returns close to that level within **window**. Sustained
 changes are retained, as they may represent genuine environmental changes.
-Excluded observations are treated as missing and filled through
-**interpolation** before STL decomposition and trend regression. They are
-shown as lighter-coloured markers in the Observed panel, unless **-e** is
-given, in which case the markers are left out and the Observed panel's y-axis
-autoscales to the gap-filled series alone, rather than being stretched to also
-fit the excluded values. The pixel-value spread band (**-d**) is blanked and
-interpolated at the same timesteps, so it does not keep showing the raw spread
-at an excluded date either.
+Excluded observations are treated as missing and always filled by linear
+interpolation (regardless of **interpolation**, which still governs genuine
+gaps) before STL decomposition and trend regression: an excursion can span
+many steps, and a curvature-fitting method bridging a gap that wide can
+overshoot past either neighbour, undoing the whole point of excluding the
+outlier by replacing it with a different, possibly larger artefact. Excluded
+observations are shown as lighter-coloured markers in the Observed panel,
+unless **-e** is given, in which case the markers are left out and the
+Observed panel's y-axis autoscales to the gap-filled series alone, rather than
+being stretched to also fit the excluded values. The pixel-value spread band
+(**-d**) is blanked and linearly interpolated at the same timesteps, so it
+does not keep showing the raw spread at an excluded date either.
 
 This option helps identify potential data artefacts, such as cloud
 contamination or sensor errors, that STL's robust fitting (**-r**) and the

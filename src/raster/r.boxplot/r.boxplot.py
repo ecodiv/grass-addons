@@ -130,7 +130,7 @@
 # % key: style
 # % type: string
 # % label: Matplotlib style
-# % description: Matplotlib style sheet, see https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html
+# % description: Name of a built-in Matplotlib style (see https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html), or the path to a custom .mplstyle file (see https://matplotlib.org/stable/tutorials/introductory/customizing.html#defining-your-own-style).
 # % required: no
 # % guisection: Plot format
 # %end
@@ -148,6 +148,15 @@
 # % key: rotate_labels
 # % label: Rotate labels
 # % description: Rotate labels (degrees)
+# % guisection: Plot format
+# %end
+
+# %option
+# % key: axis_label
+# % type: string
+# % label: Value axis title
+# % description: Title of the value axis (the y-axis, or the x-axis when the -h flag is set). Defaults to the name of the input raster.
+# % required: no
 # % guisection: Plot format
 # %end
 
@@ -190,6 +199,13 @@
 # % key: c
 # % label: Zonal colors
 # % description: Color boxploxs using the colors of the categories of the zonal raster
+# % guisection: Boxplot format
+# %end
+
+# %flag
+# % key: m
+# % label: Map colors
+# % description: Color boxplot(s) using the color table of the input value map, looked up at each box's median. Requires GRASS GIS >= 8.5; ignored (with a warning) on an older GRASS.
 # % guisection: Boxplot format
 # %end
 
@@ -299,9 +315,12 @@
 # % requires: area_label, zones
 # % requires: raster_statistics, zones
 # % requires: box_width_variable, zones
+# % exclusive: -c, -m
 # %end
 
 import atexit
+import json
+import os
 import sys
 import uuid
 from subprocess import PIPE
@@ -329,18 +348,24 @@ def lazy_import_py_modules(backend):
 
 
 def apply_style(style):
-    """Apply a Matplotlib style sheet, validating the name.
+    """Apply a Matplotlib style sheet: either a built-in style name, or the
+    path to a custom .mplstyle file (e.g. to set 'axes.linewidth' thinner
+    than any built-in style does).
 
-    :param str style: name of a Matplotlib style sheet
+    :param str style: name of a built-in Matplotlib style, or a path to a
+        custom style file
     """
-    if style:
-        if style not in plt.style.available:
-            gs.fatal(
-                _("Unknown style '{}'. Available styles: {}").format(
-                    style, ", ".join(plt.style.available)
-                )
-            )
-        plt.style.use(style)
+    if not style:
+        return
+    if style not in plt.style.available and not os.path.isfile(style):
+        gs.fatal(
+            _(
+                "'{}' is neither a built-in style ({}) nor an existing "
+                "file. A custom style is given as the path to a "
+                ".mplstyle file."
+            ).format(style, ", ".join(plt.style.available))
+        )
+    plt.style.use(style)
 
 
 def create_unique_name(name):
@@ -444,6 +469,20 @@ def check_integer(name):
     input_info = gs.raster_info(name)
     if input_info["datatype"] != "CELL":
         gs.fatal(_("The zonal raster must be of type CELL (integer)"))
+
+
+def has_json_color_support():
+    """Whether r.what.color on this GRASS install supports format=json.
+
+    JSON output was added to r.what.color in GRASS 8.5 (GRASS#5822);
+    get_valuecolors() (the -m flag) depends on it. String-compares the
+    major.minor version components, the same pattern used elsewhere in
+    grass-addons (e.g. r.windfetch) to gate a GRASS-version-dependent
+    feature.
+
+    :return bool: True if the installed GRASS is 8.5 or later
+    """
+    return gs.version()["version"].split(".")[:2] >= ["8", "5"]
 
 
 def raster_stats(name):
@@ -598,14 +637,66 @@ def get_zonalcolors(zones, labelsids):
     zones_color = [_y[1] for _y in [_x.split(" ") for _x in zones_color]]
     zones_color = [_z.split(":") for _z in zones_color]
     zones_rgb = [[int(_x) / 255 for _x in _y] for _y in zones_color]
-    txt_rgb = []
-    for i in zones_color:
-        rgb_i = list(map(int, i))
-        if rgb_i[0] * 0.299 + rgb_i[1] * 0.587 + rgb_i[2] * 0.114 > 149:
-            txt_rgb.append([0, 0, 0, 0.7])
-        else:
-            txt_rgb.append([1, 1, 1, 0.7])
+    txt_rgb = [contrast_text_rgb(list(map(int, i))) for i in zones_color]
     return zones_rgb, txt_rgb
+
+
+def contrast_text_rgb(rgb255):
+    """Pick black or white (whichever reads better) for text/lines drawn on
+    top of a fill colour.
+
+    Shared by get_zonalcolors() and get_valuecolors() so both box-colouring
+    options (-c, -m) pick their median-line colour the same way.
+
+    :param list rgb255: [R, G, B] in 0-255
+    :return list: [0, 0, 0, 0.7] (black) or [1, 1, 1, 0.7] (white)
+    """
+    luminance = rgb255[0] * 0.299 + rgb255[1] * 0.587 + rgb255[2] * 0.114
+    return [0, 0, 0, 0.7] if luminance > 149 else [1, 1, 1, 0.7]
+
+
+def get_valuecolors(value_raster, values):
+    """Get the colors of the input value map's own color table at the given
+    values, for the -m (map colors) option.
+
+    Unlike get_zonalcolors() (which needs the zonal map's discrete, per
+    category colors) this looks up each box's median and the corresponding
+    color from the color table of the value raster.
+
+    :param str value_raster: name of the input value raster
+    :param list values: value to look up per box, in the same order the
+        boxes will be drawn in
+
+    :return list values_rgb: list of RGB codes (0-1), one per value
+    :return list txt_rgb: matching median-line/label contrast colors
+    """
+    query = "\n".join(str(v) for v in values)
+    result = Module(
+        "r.what.color",
+        input=value_raster,
+        format="json",
+        color_format="triplet",
+        flags="i",
+        stdin_=query,
+        stdout_=PIPE,
+    ).outputs.stdout
+    looked_up = json.loads(result)
+
+    values_rgb = []
+    txt_rgb = []
+    for entry in looked_up:
+        if entry["color"] is None:
+            gs.fatal(
+                _(
+                    "Value {v} has no color in the color table of '{m}'; "
+                    "the -m (map colors) option needs a color table that "
+                    "covers the full value range."
+                ).format(v=entry["value"], m=value_raster)
+            )
+        rgb255 = [int(_c) for _c in entry["color"].split(":")]
+        values_rgb.append([_c / 255 for _c in rgb255])
+        txt_rgb.append(contrast_text_rgb(rgb255))
+    return values_rgb, txt_rgb
 
 
 def bx_zonal_stats(zones, name, order):
@@ -1043,14 +1134,26 @@ def bxp_nozones(opt):
             "cihi": upper_notch,
         }
     ]
-    ax.bxp(boxes, **build_bxp_kwargs(opt, widths=opt["bxp_width"]))
+    patch_artist = opt["bx_color"] is not None or bool(opt["bx_mapcolors"])
+    bxplot = ax.bxp(
+        boxes,
+        **build_bxp_kwargs(opt, widths=opt["bxp_width"], patch_artist=patch_artist),
+    )
+
+    # -m (map colors): a single box, colored by the whole raster's median
+    # looked up in its own color table.
+    if bool(opt["bx_mapcolors"]):
+        values_rgb, txt_rgb = get_valuecolors(opt["value_raster"], [quant2])
+        bxplot["boxes"][0].set_facecolor(values_rgb[0])
+        bxplot["medians"][0].set_color(txt_rgb[0])
 
     # Labels
+    axis_label = opt["axis_label"] or strip_mapset(opt["value_name"])
     if bool(opt["vertical"]):
-        ax.set_ylabel(strip_mapset(opt["value_name"]))
+        ax.set_ylabel(axis_label)
         ax.axes.get_xaxis().set_visible(False)
     else:
-        ax.set_xlabel(strip_mapset(opt["value_name"]))
+        ax.set_xlabel(axis_label)
         ax.axes.get_yaxis().set_visible(False)
 
     # Label orientation
@@ -1179,6 +1282,13 @@ def bxp_zones(opt):
             "cihi": upper_notch,
         }
         boxes.append(dict_i)
+
+    # -m (map colors): look up each zone's median in the input value map's
+    # own color table, in the same order the boxes above were built.
+    if opt["bx_mapcolors"]:
+        values_rgb, txt_rgb = get_valuecolors(
+            opt["value_raster"], [box["med"] for box in boxes]
+        )
 
     # Save outlier vector layer
     if bool(opt["name_outliers_map"]) and bool(vectornames):
@@ -1310,8 +1420,12 @@ def bxp_zones(opt):
         else:
             area_labels = ["{:.0f} m²".format(a) for a in areas_for_labels]
 
-    # Zonal colors need patch artists to receive their facecolor
-    patch_artist = opt["bx_color"] is not None or bool(opt["bx_zonalcolors"])
+    # Zonal/map colors need patch artists to receive their facecolor
+    patch_artist = (
+        opt["bx_color"] is not None
+        or bool(opt["bx_zonalcolors"])
+        or bool(opt["bx_mapcolors"])
+    )
     bxplot = ax.bxp(
         boxes, **build_bxp_kwargs(opt, widths=widths, patch_artist=patch_artist)
     )
@@ -1339,18 +1453,25 @@ def bxp_zones(opt):
                     fontsize=label_fontsize,
                 )
 
-    # Boxplots get colors matching category colors zonal map
+    # Boxplots get colors matching category colors zonal map, or the input
+    # value map's own color table (-c, -m -- mutually exclusive)
     if bool(opt["bx_zonalcolors"]):
         for patch, color in zip(bxplot["boxes"], zones_rgb):
             patch.set_facecolor(color)
         for median, mcolor in zip(bxplot["medians"], txt_rgb):
             median.set_color(mcolor)
+    elif bool(opt["bx_mapcolors"]):
+        for patch, color in zip(bxplot["boxes"], values_rgb):
+            patch.set_facecolor(color)
+        for median, mcolor in zip(bxplot["medians"], txt_rgb):
+            median.set_color(mcolor)
 
     # Labels
+    axis_label = opt["axis_label"] or strip_mapset(opt["value_name"])
     if bool(opt["vertical"]):
-        ax.set_ylabel(strip_mapset(opt["value_name"]))
+        ax.set_ylabel(axis_label)
     else:
-        ax.set_xlabel(strip_mapset(opt["value_name"]))
+        ax.set_xlabel(axis_label)
 
     # Label orientation
     if bool(opt["rotate_labels"]) and opt["vertical"]:
@@ -1410,6 +1531,20 @@ def main(options, flags):
         get_valid_color(options["median_color"]) if options["median_color"] else None
     )
 
+    # -m (map colors) needs r.what.color's JSON output, added in GRASS 8.5
+    # (r.what.color: Add JSON support, GRASS#5822); on an older GRASS, warn
+    # and ignore the flag rather than failing on the unparsable plain-text
+    # output get_valuecolors() would otherwise get back.
+    bx_mapcolors = flags["m"]
+    if bx_mapcolors and not has_json_color_support():
+        gs.warning(
+            _(
+                "The -m (map colors) flag needs GRASS GIS 8.5 or later "
+                "(this is {v}); ignoring it."
+            ).format(v=gs.version()["version"])
+        )
+        bx_mapcolors = False
+
     # Whisker parameters
     whisker_range = float(options["range"])
     if whisker_range <= 0:
@@ -1467,6 +1602,7 @@ def main(options, flags):
         "name_outliers_map": options["map_outliers"],
         "fontsize": float(options["fontsize"]) if options["fontsize"] else None,
         "rotate_labels": options["rotate_labels"],
+        "axis_label": options["axis_label"] if options["axis_label"] else None,
         "dimensions": dimensions,
         "dpi": dpi,
         "vertical": vertical,
@@ -1475,6 +1611,7 @@ def main(options, flags):
         ),
         "bxp_width": bxp_width,
         "bx_color": bx_color,
+        "bx_mapcolors": bx_mapcolors,
         "whisker_linewidth": (
             float(options["whisker_linewidth"])
             if options["whisker_linewidth"]

@@ -339,6 +339,24 @@ trend window:
 If you see a fitted line or curve being pulled by an upswing or downswing right
 at the edge of the plot, increasing **trend_trim** is the appropriate fix.
 
+### Trend breakpoints
+
+A single OLS/Theil-Sen slope over the whole series averages away a real
+turning point, for example a rise, a decline, and a renewed rise. The
+**breakpoints** option splits the OLS/Theil-Sen fit into separate segments
+instead: one or more dates (absolute-time) or time steps (relative-time),
+each starting a new segment, with the series' own start and end as the
+outer boundaries. Each segment is reported and drawn with its own
+slope/R²/*p*, labelled by its date (or step) range. **trend_trim** still only
+trims the series' true start and end; an interior breakpoint is not a LOESS
+edge, so no trim is applied there. The monotone GAM curve (**-g**), if
+requested, is always fit on the whole series regardless of **breakpoints**,
+since forcing it through artificial kinks would defeat its point. Combine
+**breakpoints** with matching **vlines** values to also mark them on the
+plot. A segment left with too few observations after trimming (fewer than
+4) is rejected with an error naming it, rather than silently reporting a
+near-meaningless fit.
+
 ### Vertical reference lines
 
 The **vlines** option draws one or more dashed vertical reference lines across
@@ -356,10 +374,11 @@ By default the multi-panel plot is shown in an interactive window. If **output**
 is given, the plot is instead saved to that file and the image format is taken
 from the file extension (`.png`, `.pdf`, `.svg`, ...). Plot appearance is
 controlled by **dpi** (resolution, default 300) and **plot_dimensions**
-(width,height in inches). The **style** option applies a
-Matplotlib [style
-sheet](https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html)
-to the plot, e.g. *style=ggplot*.
+(width,height in inches). The **style** option applies a Matplotlib
+[style sheet](https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html)
+to the plot, e.g. *style=ggplot*. It also accepts the path to a custom
+[.mplstyle file](https://matplotlib.org/stable/tutorials/introductory/customizing.html#defining-your-own-style),
+e.g. to set a thinner `axes.linewidth` than any built-in style does.
 
 The **plots** option selects which of the four panels (observed, trend,
 seasonal, residual) are drawn. By default all four are shown; list a subset to

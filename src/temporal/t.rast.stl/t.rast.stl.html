@@ -399,6 +399,25 @@ If you see a fitted line or curve being pulled by an upswing or downswing
 right at the edge of the plot, increasing <b>trend_trim</b> is the appropriate
 fix.
 
+<h3>Trend breakpoints</h3>
+
+<p>
+A single OLS/Theil-Sen slope over the whole series averages away a real
+turning point, for example a rise, a decline, and a renewed rise. The
+<b>breakpoints</b> option splits the OLS/Theil-Sen fit into separate segments
+instead: one or more dates (absolute-time) or time steps (relative-time),
+each starting a new segment, with the series' own start and end as the
+outer boundaries. Each segment is reported and drawn with its own
+slope/R²/<i>p</i>, labelled by its date (or step) range. <b>trend_trim</b>
+still only trims the series' true start and end; an interior breakpoint is
+not a LOESS edge, so no trim is applied there. The monotone GAM curve
+(<b>-g</b>), if requested, is always fit on the whole series regardless of
+<b>breakpoints</b>, since forcing it through artificial kinks would defeat
+its point. Combine <b>breakpoints</b> with matching <b>vlines</b> values to
+also mark them on the plot. A segment left with too few observations after
+trimming (fewer than 4) is rejected with an error naming it, rather than
+silently reporting a near-meaningless fit.
+
 <h3>Vertical reference lines</h3>
 
 The <b>vlines</b> option draws one or more dashed vertical reference lines
@@ -420,7 +439,11 @@ format is taken from the file extension (<tt>.png</tt>, <tt>.pdf</tt>,
 default 300) and <b>plot_dimensions</b> (width,height in inches). The
 <b>style</b> option applies a Matplotlib <a
 href="https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html">style
-sheet</a> to the plot, e.g. <i>style=ggplot</i>.
+sheet</a> to the plot, e.g. <i>style=ggplot</i>. It also accepts the path to
+a custom <a
+href="https://matplotlib.org/stable/tutorials/introductory/customizing.html#defining-your-own-style">.mplstyle
+file</a>, e.g. to set a thinner <tt>axes.linewidth</tt> than any built-in
+style does.
 
 <p>
 The <b>plots</b> option selects which of the four panels (observed, trend,

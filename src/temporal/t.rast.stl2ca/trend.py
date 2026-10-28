@@ -572,6 +572,81 @@ def write_csv(
     gs.message(_("Components written to {}").format(csv_path))
 
 
+def trend_stats_rows(categories):
+    """Build one combined list of trend-statistics rows, one per category.
+
+    Shared by write_trend_stats_csv() (below) and interactive.py's HTML
+    stats table, so the two always report the same numbers the same way.
+
+    A category fit with 'trend_fit_segments' (the breakpoints= option) gets
+    one row per segment, each naming its own date/step range in the
+    'segment' column, in addition to -- not instead of -- its whole-series
+    row (segment=''); a category without breakpoints_opt has just the one,
+    whole-series row.
+
+    :param list categories: one dict per category, each with 'label' (str),
+        'trend_fit' (trend.fit_trend() dict or None) and
+        'trend_fit_segments' (list of (fit dict, segment label) pairs, or
+        None), i.e. the same per-category dicts plot.plot_result() takes.
+    :return list: dicts with keys category/segment/n_obs/unit/sen_slope/
+        mk_tau/mk_pvalue
+    """
+    rows = []
+    for category in categories:
+        trend_fit = category.get("trend_fit")
+        if trend_fit is not None:
+            rows.append(_trend_stats_row(category["label"], "", trend_fit))
+        for seg_fit, seg_label in category.get("trend_fit_segments") or []:
+            rows.append(_trend_stats_row(category["label"], seg_label.strip(), seg_fit))
+    return rows
+
+
+def write_trend_stats_csv(categories, csv_path):
+    """Write trend_stats_rows(categories) to one combined CSV file.
+
+    t.rast.stl2ca.py does not expose the stats-in-legend plot option this
+    addon used to have; this is its replacement, reporting the same
+    Theil-Sen/Mann-Kendall numbers (already computed by fit_trend()
+    regardless, whether or not a trend line is actually drawn) as a file
+    instead of on the plot.
+
+    :param list categories: see trend_stats_rows()
+    :param str csv_path: output CSV path
+    """
+    rows = trend_stats_rows(categories)
+    if not rows:
+        gs.warning(_("No trend statistics to write to '{}'.").format(csv_path))
+        return
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    gs.message(_("Trend statistics written to {}").format(csv_path))
+
+
+def _trend_stats_row(label, segment, fit):
+    """Build one write_trend_stats_csv() row from one fit_trend() result.
+
+    OLS is deliberately left out here, even though fit_trend() always
+    computes it (a negligible extra cost alongside Theil-Sen/Mann-Kendall,
+    and e.g. t.rast.stl's own copy of this file still reports it): this
+    addon's driver never exposes a way to draw the OLS line (no '-o' flag),
+    so reporting its numbers in a CSV/table with nothing on the plot to
+    relate them to would be confusing rather than useful.
+
+    :param str label: category label
+    :param str segment: segment label, or '' for the whole-series fit
+    :param dict fit: a fit_trend() result dict
+    :return dict: one CSV row
+    """
+    return {
+        "category": label,
+        "segment": segment,
+        "n_obs": fit["x_stop"] - fit["x_start"] + 1,
+        "unit": fit.get("unit_label"),
+        "sen_slope": fit["sen_slope_report"],
+        "mk_tau": fit["mk_tau"],
+        "mk_pvalue": fit["mk_pvalue"],
+    }
+
+
 def fit_gam(xm, ym, direction, sen_slope):
     """Fit a shape-constrained (monotone) GAM to (xm, ym) with pyGAM.
 
@@ -1062,7 +1137,9 @@ def decompose_and_fit(
                 pre=prefix, w=7
             )
         )
-    tw = effective_trend_window(period, stl_kwargs.get("seasonal"), stl_kwargs.get("trend"))
+    tw = effective_trend_window(
+        period, stl_kwargs.get("seasonal"), stl_kwargs.get("trend")
+    )
     if not stl_kwargs.get("trend"):
         gs.message(
             _("{pre}Estimated STL trend window: {w} observations.").format(
@@ -1169,7 +1246,9 @@ def decompose_and_fit(
             )
             if show_ols:
                 gs.message(
-                    _("{pre}Trend{label} (OLS): slope={s}, R^2={r:.3f}, p={p:.3g}").format(
+                    _(
+                        "{pre}Trend{label} (OLS): slope={s}, R^2={r:.3f}, p={p:.3g}"
+                    ).format(
                         pre=prefix,
                         label=seg_label,
                         s=format_slope(seg_fit["slope_report"], unit_label),

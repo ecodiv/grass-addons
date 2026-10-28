@@ -3,10 +3,10 @@
 # MODULE:       t.rast.stl2ca (library)
 # AUTHOR:       Paulo van Breugel
 # PURPOSE:      Data-extraction and regularization helpers for t.rast.stl2ca:
-#               sampling a strds at a point/zone/raster, parsing the
-#               t.rast.univar/t.rast.what output, the temporal-outlier
-#               filter, and resampling the series onto a regular,
-#               gap-free axis.
+#               building the per-category zones raster (from a CELL raster's
+#               own cell values, or from a vector attribute column), parsing
+#               the t.rast.univar output into one series per category, and
+#               resampling each series onto a regular, gap-free axis.
 #
 #               Originally split out of t.rast.stl; t.rast.stl2ca keeps its
 #               own copy since each GRASS addon is installed independently.
@@ -18,8 +18,8 @@
 #
 #############################################################################
 
-"""Data extraction, sampling-area preparation, outlier filtering and
-regularization for t.rast.stl2ca.
+"""Data extraction, category-raster preparation and regularization for
+t.rast.stl2ca.
 
 np/pd are set by t.rast.stl2ca.lazy_import_py_modules() -- after GRASS parses
 the command line -- rather than imported here, so a plain module scan
@@ -39,160 +39,14 @@ np = None
 pd = None
 
 # Temporary dirs/rasters created during extraction, removed by
-# t.rast.stl.cleanup() at exit (imported there via 'from extract import').
+# t.rast.stl2ca.cleanup() at exit (imported there via 'from extract import').
+# The user's own raster= input is never added here (see validate_category_raster()).
 clean_dirs = []
 clean_rasters = []
 
 
-def coords_from_option(coordinates):
-    """Parse the coordinates= option into an (east, north) float pair.
-
-    :param str coordinates: "east,north" as given on the command line
-    :return tuple: (east, north) as floats
-    """
-    parts = coordinates.split(",")
-    if len(parts) != 2:
-        gs.fatal(_("The coordinates option must be a single 'east,north' pair."))
-    try:
-        east, north = float(parts[0]), float(parts[1])
-    except ValueError:
-        gs.fatal(_("Could not parse coordinates '{}' as numbers.").format(coordinates))
-    return (east, north)
-
-
-def validate_zone(zone):
-    """Check that the zone= vector map exists.
-
-    :param str zone: name of the vector map (as given on the command line)
-    """
-    found = gs.find_file(name=zone, element="vector")
-    if not found.get("fullname"):
-        gs.fatal(_("Vector map '{}' not found.").format(zone))
-
-
-def make_zone_raster(zone):
-    """Rasterize zone= into a single-category zones raster for t.rast.univar.
-
-    All features in the vector, of any geometry type (point, line or area),
-    are burned to the same category value (1), so the strds is sampled as one
-    pooled zone regardless of how many features the vector has. The raster is
-    registered in ``clean_rasters`` for removal by cleanup().
-
-    Feature-type and emptiness are not checked beforehand: if the vector has
-    nothing that rasterizes into the current region (e.g. it falls outside
-    it), that shows up here as zero non-null cells and is fatal.
-
-    :param str zone: name of the input vector map
-    :return str: name of the created zones raster
-    """
-    zone_raster = gs.tempname(12)
-    try:
-        gs.run_command(
-            "v.to.rast",
-            input=zone,
-            output=zone_raster,
-            use="val",
-            value=1,
-            quiet=True,
-        )
-    except CalledModuleError:
-        gs.fatal(_("Could not rasterize the zone vector map '{}'.").format(zone))
-    clean_rasters.append(zone_raster)
-
-    stats = gs.parse_command("r.univar", flags="g", map=zone_raster)
-    if int(stats.get("n", 0)) == 0:
-        gs.fatal(
-            _(
-                "The zone vector map '{}' has no features that fall within "
-                "the current computational region; nothing to sample."
-            ).format(zone)
-        )
-    return zone_raster
-
-
-def zone_bbox_center(zone):
-    """Center of the zone vector map's bounding box, for messages/tagging only.
-
-    This is not used for sampling (the actual sampling area is the rasterized
-    zone, see make_zone_raster()); it is just a representative (east, north)
-    location for terminal messages and the optional 'vector' output.
-
-    :param str zone: name of the vector map
-    :return tuple: (east, north) as floats
-    """
-    info = gs.parse_command("v.info", flags="g", map=zone)
-    east = (float(info["east"]) + float(info["west"])) / 2.0
-    north = (float(info["north"]) + float(info["south"])) / 2.0
-    return (east, north)
-
-
-def validate_raster(raster):
-    """Check that the raster= map defining the sampling area exists.
-
-    :param str raster: name of the raster map (as given on the command line)
-    """
-    found = gs.find_file(name=raster, element="cell")
-    if not found.get("fullname"):
-        gs.fatal(_("Raster map '{}' not found.").format(raster))
-
-
-def make_raster_zone(raster):
-    """Turn raster= into a single-category zones raster for t.rast.univar.
-
-    Every non-null cell of raster= is burned to the same category value (1),
-    regardless of its actual value, so the strds is sampled as one pooled
-    zone over all non-null cells. The raster is registered in
-    ``clean_rasters`` for removal by cleanup().
-
-    Only isnull() is evaluated, so this costs the same for CELL, FCELL or
-    DCELL input; the cell type of raster= does not affect performance here.
-
-    :param str raster: name of the input raster map
-    :return str: name of the created zones raster
-    """
-    zone_raster = gs.tempname(12)
-    try:
-        gs.run_command(
-            "r.mapcalc",
-            expression=f"{zone_raster} = if(isnull({raster}), null(), 1)",
-            quiet=True,
-        )
-    except CalledModuleError:
-        gs.fatal(_("Could not derive the sampling area from raster '{}'.").format(raster))
-    clean_rasters.append(zone_raster)
-
-    stats = gs.parse_command("r.univar", flags="g", map=zone_raster)
-    if int(stats.get("n", 0)) == 0:
-        gs.fatal(
-            _(
-                "Raster '{}' has no non-null cells within the current "
-                "computational region; nothing to sample."
-            ).format(raster)
-        )
-    return zone_raster
-
-
-def raster_bbox_center(raster):
-    """Center of the raster= map's bounding box, for messages/tagging only.
-
-    This is not used for sampling (the actual sampling area is the non-null
-    cells, see make_raster_zone()); it is just a representative (east,
-    north) location for terminal messages and the optional 'vector' output.
-
-    :param str raster: name of the raster map
-    :return tuple: (east, north) as floats
-    """
-    info = gs.parse_command("r.info", flags="g", map=raster)
-    east = (float(info["east"]) + float(info["west"])) / 2.0
-    north = (float(info["north"]) + float(info["south"])) / 2.0
-    return (east, north)
-
-
 def find_column(header, name):
     """Return the index of a column named ``name`` in a pipe-table header.
-
-    Shared by extract_series() and extract_zonal_series() so both locate
-    their columns by name rather than by (version-dependent) position.
 
     :param list header: header row, already split on '|'
     :param str name: column name to look up
@@ -223,122 +77,298 @@ def parse_zonal_token(token):
         return None
 
 
-def extract_series(strds, east, north, where, null_value="nan", nprocs=1):
-    """Extract a (date, value) series for one point from an strds.
+def validate_category_raster(raster):
+    """Check that raster= exists, is CELL type and has at least one category.
 
-    Uses t.rast.what with layout=row so each registered timestep yields one
-    row of the form "start|end|value" (with -n adding a header row).
-
-    :param str strds: name of the input space-time raster dataset
-    :param float east: easting of the point
-    :param float north: northing of the point
-    :param str where: optional t.* WHERE clause to subset maps
-    :param str null_value: token used by t.rast.what for NULL pixel values
-    :param int nprocs: number of parallel r.what processes for t.rast.what
-
-    :return tuple: (list_of_start_datetimes_as_str, list_of_float_or_None)
+    :param str raster: name of the raster map (as given on the command line)
+    :return str: the map's full name (mapset-qualified)
     """
-    kwargs = {
-        "strds": strds,
-        "coordinates": [east, north],
-        "layout": "row",
-        "null_value": null_value,
-        "flags": "n",  # header row, so we can find columns by name
-        "separator": "pipe",
-        "nprocs": nprocs,
-    }
-    if where:
-        kwargs["where"] = where
+    found = gs.find_file(name=raster, element="cell")
+    fullname = found.get("fullname")
+    if not fullname:
+        gs.fatal(_("Raster map '{}' not found.").format(raster))
+    info = gs.raster_info(raster)
+    if info.get("datatype") != "CELL":
+        gs.fatal(
+            _(
+                "Raster map '{}' is {} but 'raster' must be CELL (integer) "
+                "type, since its cell values are used directly as category "
+                "codes."
+            ).format(raster, info.get("datatype"))
+        )
+    return fullname
 
-    # t.rast.what assembles its result into the file given by output=, but for
-    # long series it also seems to write intermediate r.what text files. It is
-    # not clear how to avoid that, so a temporary directory is used as the working
-    # directory and the assembled result is written to a file in that same
-    # directory. The directory is registered for removal by the atexit
-    # cleanup() handler.
-    tmpdir = gs.tempdir()
-    clean_dirs.append(tmpdir)
-    out_file = os.path.join(tmpdir, "series.txt")
+
+def validate_vector(vector):
+    """Check that the vector map exists.
+
+    :param str vector: name of the vector map (as given on the command line)
+    :return str: the map's full name (mapset-qualified)
+    """
+    found = gs.find_file(name=vector, element="vector")
+    fullname = found.get("fullname")
+    if not fullname:
+        gs.fatal(_("Vector map '{}' not found.").format(vector))
+    return fullname
+
+
+def shrink_region_to_raster(raster):
+    """Shrink the (already temporary) computational region to raster's own
+    non-null data extent, keeping the current resolution.
+
+    g.region's zoom= already intersects with whatever region is current
+    rather than expanding past it, so this is a direct, safe shrink: cells
+    outside a category's own extent never contributed to its statistics
+    anyway, so this only reduces how much t.rast.univar has to sweep later,
+    never changes a result. Called on a region set up with
+    grass.script.use_temp_region(), so the user's own region is untouched.
+
+    :param str raster: name of the raster map (mapset-qualified)
+    """
+    gs.run_command("g.region", zoom=raster)
+
+
+def shrink_region_to_vector(vector):
+    """Shrink the (already temporary) computational region to vector's own
+    bounding box, intersected with whatever region is current, keeping the
+    current resolution.
+
+    Unlike g.region zoom= (see shrink_region_to_raster()), g.region's
+    vector=/-a combination expands the region to the vector's full bounding
+    box regardless of the current region, so the intersection is computed
+    by hand here -- this must only ever shrink the region, never grow it
+    past what the caller already had, or a category could end up sampled
+    over an area the user never asked for. Called on a region set up with
+    grass.script.use_temp_region(), so the user's own region is untouched.
+
+    :param str vector: name of the vector map (mapset-qualified)
+    """
+    orig = gs.region()
+    gs.run_command("g.region", vector=vector, flags="a")
+    new = gs.region()
+    n = min(orig["n"], new["n"])
+    s = max(orig["s"], new["s"])
+    e = min(orig["e"], new["e"])
+    w = max(orig["w"], new["w"])
+    if n <= s or e <= w:
+        gs.fatal(
+            _(
+                "Vector map '{}' has no features within the current "
+                "computational region; nothing to sample."
+            ).format(vector)
+        )
+    gs.run_command("g.region", n=n, s=s, e=e, w=w, flags="a")
+
+
+def vector_category_raster(vector, layer, column):
+    """Build a categories raster from a vector map's attribute column.
+
+    Every feature is first rasterized with its own 'cat' value (so a
+    multi-feature vector gets one raster category per feature); when
+    ``column`` is anything other than 'cat', features sharing the same
+    ``column`` value are then collapsed onto one shared category, via
+    r.reclass, with that value (as text) set as the category's label. This
+    works the same way whether ``column`` holds numbers or text, and needs
+    no attribute lookup at all when ``column`` is 'cat' (the default),
+    since every feature is then already its own category.
+
+    :param str vector: name of the input vector map (mapset-qualified)
+    :param str layer: vector layer (field) number or name
+    :param str column: attribute column defining the category grouping, or
+        'cat' for one category per feature
+    :return str: name of the created categories raster (registered in
+        ``clean_rasters`` for removal by cleanup())
+    """
+    cat_raster = gs.tempname(12)
     try:
         gs.run_command(
-            "t.rast.what",
-            cwd=tmpdir,
-            overwrite=True,
-            output=out_file,
-            **kwargs,
+            "v.to.rast",
+            input=vector,
+            layer=layer,
+            output=cat_raster,
+            use="cat",
+            quiet=True,
         )
     except CalledModuleError:
         gs.fatal(
             _(
-                "t.rast.what failed while sampling strds '{}'. Check that "
-                "the dataset exists, that the point falls within the "
-                "current computational region, and that the region "
-                "resolution is set (see g.region)."
-            ).format(strds)
+                "Could not rasterize vector map '{}' (layer {}). Check that "
+                "the layer exists and has features within the current "
+                "computational region."
+            ).format(vector, layer)
         )
+    clean_rasters.append(cat_raster)
+
+    if column == "cat":
+        return cat_raster
+
     try:
-        with open(out_file) as fh:
-            raw = fh.read()
-    except OSError:
-        gs.fatal(_("t.rast.what produced no output file for the point."))
+        table = gs.read_command(
+            "v.db.select",
+            map=vector,
+            layer=layer,
+            columns="cat,{}".format(column),
+            separator="pipe",
+            flags="c",
+            quiet=True,
+        )
+    except CalledModuleError:
+        gs.fatal(
+            _(
+                "Could not read column '{col}' (layer {lyr}) from vector map "
+                "'{v}'. Check that the column exists and that layer {lyr} "
+                "has an attribute table."
+            ).format(col=column, lyr=layer, v=vector)
+        )
 
-    lines = [ln for ln in raw.splitlines() if ln.strip()]
-    if not lines:
-        gs.fatal(_("t.rast.what returned no data for the given point."))
-
-    header = lines[0].split("|")
-    # Row layout for a single point: x|y|start|end|value
-    start_idx = find_column(header, "start")
-    if start_idx is None:
-        # Fall back to position.
-        start_idx = 2 if len(header) >= 5 else 0
-    value_idx = len(header) - 1
-
-    dates = []
-    values = []
-    for ln in lines[1:]:
-        cols = ln.split("|")
-        if len(cols) <= value_idx:
+    pairs = []
+    for line in table.splitlines():
+        if not line.strip():
             continue
-        dates.append(cols[start_idx])
-        token = cols[value_idx]
-        if token in (null_value, "", "*", "None"):
-            values.append(None)
-        else:
-            try:
-                values.append(float(token))
-            except ValueError:
-                values.append(None)
+        parts = line.split("|", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            cat_value = int(parts[0])
+        except ValueError:
+            continue
+        pairs.append((cat_value, parts[1]))
+    if not pairs:
+        gs.fatal(
+            _("Column '{}' of vector map '{}' has no values to group by.").format(
+                column, vector
+            )
+        )
 
-    if not dates:
-        gs.fatal(_("Could not parse any timesteps from t.rast.what output."))
-    return (dates, values)
+    # Distinct group values, in a stable order: numeric ascending when every
+    # value parses as a number, else alphabetical. Each gets its own new
+    # integer category code (r.reclass output), labelled with the original
+    # (text or numeric) value.
+    seen = []
+    seen_set = set()
+    for _cat, value in pairs:
+        if value not in seen_set:
+            seen_set.add(value)
+            seen.append(value)
+    try:
+        ordered = sorted(seen, key=float)
+    except ValueError:
+        ordered = sorted(seen)
+    code_of = {value: code for code, value in enumerate(ordered, start=1)}
+
+    tmpdir = gs.tempdir()
+    clean_dirs.append(tmpdir)
+    rules_file = os.path.join(tmpdir, "category_reclass.rules")
+    with open(rules_file, "w") as fh:
+        for cat_value, value in pairs:
+            fh.write("{} = {} {}\n".format(cat_value, code_of[value], value))
+
+    zone_raster = gs.tempname(12)
+    try:
+        gs.run_command(
+            "r.reclass",
+            input=cat_raster,
+            output=zone_raster,
+            rules=rules_file,
+            quiet=True,
+        )
+    except CalledModuleError:
+        gs.fatal(
+            _("Could not group vector map '{}' by column '{}'.").format(vector, column)
+        )
+    clean_rasters.append(zone_raster)
+    return zone_raster
 
 
-def percentile_column_name(value):
-    """Build the t.rast.univar column name for a percentile value.
+def discover_categories(zone_raster):
+    """List the distinct non-null categories actually present in a raster.
 
-    Mirrors the string transform GRASS core's own
-    grass.temporal.univar_statistics uses to name percentile columns
-    (e.g. 90 -> 'percentile_90', 95.5 -> 'percentile_95_5'), so this stays
-    coupled to that naming and needs updating if it ever changes there.
+    Uses r.stats (-n excludes the null row, -l adds the category label) so
+    the result reflects what is really in the raster within the current
+    computational region, rather than a possibly stale/incomplete category
+    table. A category without an explicit label (e.g. a plain raster=
+    input, or a vector 'cat' grouping) falls back to its value as a string.
 
-    :param float value: percentile value (0-100)
-    :return str: the matching t.rast.univar column name
+    :param str zone_raster: name of the categories raster (raster= input,
+        or the raster built by vector_category_raster())
+    :return list: sorted list of (int value, str label) tuples
     """
-    token = str(float(value)).rstrip("0").rstrip(".").replace(".", "_")
-    return f"percentile_{token}"
+    try:
+        raw = gs.read_command(
+            "r.stats", flags="nl", input=zone_raster, separator="pipe", quiet=True
+        )
+    except CalledModuleError:
+        gs.fatal(
+            _("Could not list the categories present in '{}'.").format(zone_raster)
+        )
+
+    categories = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("|", 1)
+        try:
+            value = int(parts[0])
+        except (ValueError, IndexError):
+            continue
+        label = parts[1].strip() if len(parts) > 1 and parts[1].strip() else str(value)
+        categories.append((value, label))
+    if not categories:
+        gs.fatal(
+            _(
+                "No categories found within the current computational "
+                "region; nothing to sample."
+            )
+        )
+    return sorted(categories)
 
 
-def extract_zonal_series(
+def filter_categories(categories, categories_opt):
+    """Restrict a discovered category list to the 'categories=' option.
+
+    Each requested token is matched against either the category's integer
+    value or its label (as strings); every token must match something.
+
+    :param list categories: (value, label) tuples from discover_categories()
+    :param str categories_opt: raw 'categories=' option value (may be empty)
+    :return list: the matching subset of ``categories``, in its original order
+    """
+    if not categories_opt:
+        return categories
+    requested = [c.strip() for c in categories_opt.split(",") if c.strip()]
+    by_token = {}
+    for value, label in categories:
+        by_token.setdefault(str(value), (value, label))
+        by_token.setdefault(label, (value, label))
+
+    selected = []
+    seen_values = set()
+    for token in requested:
+        match = by_token.get(token)
+        if match is None:
+            gs.fatal(
+                _(
+                    "'{}' in 'categories' does not match any category found "
+                    "(available: {})."
+                ).format(token, ", ".join(label for _v, label in categories))
+            )
+        if match[0] not in seen_values:
+            seen_values.add(match[0])
+            selected.append(match)
+    return selected
+
+
+def extract_zonal_series_multi(
     strds, zone_raster, where, statistic, nprocs, want_dispersion, percentile_value=None
 ):
-    """Extract a (date, value) series pooled over a zone from an strds.
+    """Extract one (date, value) series per category from an strds.
 
     A single t.rast.univar call (zones=zone_raster) covers every registered
-    timestep; with a single-category zones raster this yields exactly one
-    row per timestep, the zonal equivalent of extract_series()'s one point
-    per timestep.
+    timestep and every category present in zone_raster at once: with a
+    multi-category zones raster it reports one row per category per
+    timestep (a 'zone' column identifies which), so this parses that into
+    one series per category instead of t.rast.univar needing to be called
+    once per category.
 
     'mean', 'min' and 'max' use the plain (non-extended) statistics, which
     already include the standard deviation and the min/max columns. 'median'
@@ -348,7 +378,7 @@ def extract_zonal_series(
     values in memory per map, a real cost on very large rasters.
 
     :param str strds: name of the input space-time raster dataset
-    :param str zone_raster: name of the (single-category) zones raster
+    :param str zone_raster: name of the (multi-category) zones raster
     :param str where: optional t.* WHERE clause to subset maps
     :param str statistic: 'mean', 'median', 'min', 'max' or 'percentile'
     :param int nprocs: number of parallel processes for t.rast.univar
@@ -358,12 +388,14 @@ def extract_zonal_series(
     :param float|None percentile_value: percentile (0-100) to use when
         statistic is 'percentile'; ignored otherwise
 
-    :return tuple: (dates, values, lower, upper, pixel_counts) where
-        lower/upper/pixel_counts are lists of float/int/None (same length as
-        dates), or (None, None, None) for the three when want_dispersion is
-        False. pixel_counts is the 'non_null_cells' t.rast.univar reported
-        for each timestep, the sample size the dispersion statistic at that
-        timestep was computed from.
+    :return dict: {category_value: (dates, values, lowers, uppers, counts)},
+        one entry per category found in the t.rast.univar output; the last
+        three are lists of float/int/None (same length as dates), or
+        (None, None, None) for all categories when want_dispersion is False.
+        counts is the 'non_null_cells' t.rast.univar reported, the sample
+        size the dispersion statistic at that timestep was computed from. A
+        category present in zone_raster but never reported by t.rast.univar
+        (no overlap with any registered map) is simply absent from the dict.
     """
     kwargs = {"input": strds, "zones": zone_raster, "nprocs": nprocs}
     if where:
@@ -388,22 +420,23 @@ def extract_zonal_series(
         gs.fatal(
             _(
                 "t.rast.univar failed while sampling strds '{}' over the "
-                "zone. Check that the dataset exists and that the zone "
-                "overlaps the current computational region."
+                "categories. Check that the dataset exists and that the "
+                "categories overlap the current computational region."
             ).format(strds)
         )
 
     lines = [ln for ln in raw.splitlines() if ln.strip()]
     if not lines:
-        gs.fatal(_("t.rast.univar returned no data for the given zone."))
+        gs.fatal(_("t.rast.univar returned no data for the given categories."))
 
     header = lines[0].split("|")
     start_idx = find_column(header, "start")
+    zone_idx = find_column(header, "zone")
     value_idx = find_column(header, value_name)
-    if start_idx is None or value_idx is None:
+    if start_idx is None or zone_idx is None or value_idx is None:
         gs.fatal(
             _(
-                "Could not find the expected 'start'/'{}' columns in "
+                "Could not find the expected 'start'/'zone'/'{}' columns in "
                 "t.rast.univar output."
             ).format(value_name)
         )
@@ -425,37 +458,75 @@ def extract_zonal_series(
             )
         count_idx = find_column(header, "non_null_cells")
 
-    dates = []
-    values = []
-    lowers = [] if want_dispersion else None
-    uppers = [] if want_dispersion else None
-    counts = [] if want_dispersion else None
-    width = max(start_idx, value_idx, lower_idx or 0, upper_idx or 0, count_idx or 0) + 1
+    width = (
+        max(
+            start_idx,
+            zone_idx,
+            value_idx,
+            lower_idx or 0,
+            upper_idx or 0,
+            count_idx or 0,
+        )
+        + 1
+    )
+    by_category = {}
     for ln in lines[1:]:
         cols = ln.split("|")
         if len(cols) < width:
             continue
-        dates.append(cols[start_idx])
+        try:
+            zone_value = int(cols[zone_idx])
+        except ValueError:
+            continue
+        series = by_category.setdefault(
+            zone_value,
+            {"dates": [], "values": [], "lowers": [], "uppers": [], "counts": []},
+        )
+        series["dates"].append(cols[start_idx])
         value = parse_zonal_token(cols[value_idx])
-        values.append(value)
+        series["values"].append(value)
         if want_dispersion:
             if statistic == "mean":
                 spread = parse_zonal_token(cols[lower_idx])
-                lowers.append(
+                series["lowers"].append(
                     value - spread if value is not None and spread is not None else None
                 )
-                uppers.append(
+                series["uppers"].append(
                     value + spread if value is not None and spread is not None else None
                 )
             else:
-                lowers.append(parse_zonal_token(cols[lower_idx]))
-                uppers.append(parse_zonal_token(cols[upper_idx]))
-            count = parse_zonal_token(cols[count_idx]) if count_idx is not None else None
-            counts.append(int(count) if count is not None else None)
+                series["lowers"].append(parse_zonal_token(cols[lower_idx]))
+                series["uppers"].append(parse_zonal_token(cols[upper_idx]))
+            count = (
+                parse_zonal_token(cols[count_idx]) if count_idx is not None else None
+            )
+            series["counts"].append(int(count) if count is not None else None)
 
-    if not dates:
+    if not by_category:
         gs.fatal(_("Could not parse any timesteps from t.rast.univar output."))
-    return (dates, values, lowers, uppers, counts)
+
+    result = {}
+    for zone_value, series in by_category.items():
+        lowers = series["lowers"] if want_dispersion else None
+        uppers = series["uppers"] if want_dispersion else None
+        counts = series["counts"] if want_dispersion else None
+        result[zone_value] = (series["dates"], series["values"], lowers, uppers, counts)
+    return result
+
+
+def percentile_column_name(value):
+    """Build the t.rast.univar column name for a percentile value.
+
+    Mirrors the string transform GRASS core's own
+    grass.temporal.univar_statistics uses to name percentile columns
+    (e.g. 90 -> 'percentile_90', 95.5 -> 'percentile_95_5'), so this stays
+    coupled to that naming and needs updating if it ever changes there.
+
+    :param float value: percentile value (0-100)
+    :return str: the matching t.rast.univar column name
+    """
+    token = str(float(value)).rstrip("0").rstrip(".").replace(".", "_")
+    return f"percentile_{token}"
 
 
 def build_series(dates, values, temporal_type="absolute"):
@@ -473,157 +544,6 @@ def build_series(dates, values, temporal_type="absolute"):
     s = pd.Series(values, index=idx, dtype="float64").sort_index()
     s = s[~s.index.duplicated(keep="first")]
     return s
-
-
-def parse_temporal_outliers(value, key):
-    """Parse a 'temporal_outliers'/'temporal_outliers2' option into
-    (threshold, window).
-
-    :param str value: the option value, e.g. '0.3,15'; may be empty.
-    :param str key: option name, used in error messages.
-    :return tuple|None: (threshold, window), both positive floats, for
-        detect_temporal_outliers(); or None if value is empty (the filter
-        is disabled).
-    """
-    if not value:
-        return None
-    parts = value.split(",")
-    if len(parts) != 2:
-        gs.fatal(_("The '{}' option must be 'threshold,window'.").format(key))
-    try:
-        threshold, window = (float(p.strip()) for p in parts)
-    except ValueError:
-        gs.fatal(
-            _("Could not parse '{}' value '{}' as two numbers.").format(key, value)
-        )
-    if threshold <= 0 or window <= 0:
-        gs.fatal(_("Both values of '{}' must be positive numbers.").format(key))
-    return threshold, window
-
-
-def _find_excursions(values, offsets, threshold, window):
-    """Find confirmed descend-then-rise excursions via a running peak/trough.
-
-    The GRASS addon t.rast.event detects disturbance/recovery events in a
-    strds the same way (tracking a running peak and following the signal
-    down until it turns back up); this is that same running-peak idea,
-    scoped down from t.rast.event's full event-recovery analysis to the
-    yes/no "is this an isolated excursion" question this filter needs.
-
-    A running peak tracks the highest value seen since the last confirmed
-    excursion (or the series start). Once the series turns below it, every
-    following point is tentatively "in descent": the running trough extends
-    as the decline continues, however many observations that takes. The
-    descent is confirmed -- and its interior points (between the peak and
-    the point that comes back near it) are returned as the excursion -- once
-    some later point returns to within half of ``threshold`` of the peak
-    *and* the peak-to-trough drop reached ``threshold``. Unlike comparing
-    each point to a fixed-size window (of several observations, or of just
-    the nearest one), the peak stays pinned at the pre-excursion level for
-    as long as the descent continues, so neither the excursion's own
-    interior points nor the ordinary point where it ends up get judged
-    against a baseline contaminated by the excursion itself.
-
-    A descent still unconfirmed after ``window`` (measured from the peak) is
-    abandoned without flagging anything, on the assumption it may be a
-    genuine, sustained change rather than a transient artefact; the running
-    peak then restarts from that point. This also means the series' final
-    open descent, if any, is never flagged, since it never got the chance to
-    confirm.
-
-    :param numpy.ndarray values: observation values, in time order
-    :param numpy.ndarray offsets: matching time offsets (days or steps)
-    :param float threshold: minimum peak-to-trough drop to confirm
-    :param float window: maximum time from the peak for the descent to
-        confirm before it is abandoned as not transient
-    :return numpy.ndarray: boolean mask (same length as ``values``) of
-        confirmed excursion-interior points
-    """
-    n = len(values)
-    excluded = np.zeros(n, dtype=bool)
-
-    in_descent = False
-    peak_val = values[0]
-    peak_idx = 0
-    trough_val = None
-    descent_indices = []
-
-    for i in range(1, n):
-        if not in_descent:
-            if values[i] >= peak_val:
-                # Refresh peak_idx even on a tie, so a long flat run before a
-                # descent doesn't leave window measured from a stale, much
-                # earlier peak than the level actually just held.
-                peak_val, peak_idx = values[i], i
-            else:
-                in_descent = True
-                trough_val = values[i]
-                descent_indices = [i]
-            continue
-
-        if offsets[i] - offsets[peak_idx] > window:
-            # Taking too long to confirm: not an isolated excursion.
-            in_descent = False
-            peak_val, peak_idx = values[i], i
-            descent_indices = []
-            continue
-
-        trough_val = min(trough_val, values[i])
-        if values[i] >= peak_val - 0.5 * threshold:
-            # Back near the peak: confirm the excursion if it was deep
-            # enough, then restart peak tracking fresh from here.
-            if peak_val - trough_val >= threshold:
-                excluded[descent_indices] = True
-            in_descent = False
-            peak_val, peak_idx = values[i], i
-            descent_indices = []
-        else:
-            descent_indices.append(i)
-
-    return excluded
-
-
-def detect_temporal_outliers(series, threshold, window, temporal_type="absolute"):
-    """Flag isolated spikes/dips that revert within a short time window.
-
-    A quality-control filter for transient artefacts (sensor noise, cloud
-    contamination, a single bad pixel), not a general outlier remover: see
-    ``_find_excursions()`` for how an excursion is confirmed. Dips and
-    spikes are both covered by running that same peak/trough logic twice,
-    once on the series and once negated (so a "descent" in the negated
-    series is a rise in the real one); a deviation that is never confirmed
-    to revert within ``window`` -- including a genuine, sustained change --
-    is left untouched in both directions.
-
-    :param pandas.Series series: irregular point series, before regularize()
-    :param float threshold: minimum peak-to-trough deviation to flag an
-        excursion, in the data's own units
-    :param float window: maximum time, from the start of an excursion, for
-        it to confirm before being treated as not transient, in calendar
-        days (absolute time) or index steps (relative time)
-    :param str temporal_type: 'absolute' or 'relative'
-    :return tuple: (cleaned_series, excluded_series); excluded_series holds
-        just the confirmed outliers (empty if none were found)
-    """
-    valid = series.dropna()
-    if len(valid) < 3:
-        return series, series.iloc[0:0]
-
-    if temporal_type == "relative":
-        offsets = valid.index.to_numpy(dtype="float64")
-    else:
-        # .total_seconds() (not '/ pd.Timedelta(days=1)') avoids a NumPy
-        # timedelta64 'generic' unit deprecation warning on some pandas/NumPy
-        # combinations.
-        offsets = (valid.index - valid.index[0]).total_seconds().to_numpy() / 86400.0
-    values = valid.to_numpy(dtype="float64")
-
-    dips = _find_excursions(values, offsets, threshold, window)
-    spikes = _find_excursions(-values, offsets, threshold, window)
-    excluded_mask = dips | spikes
-
-    excluded = valid[excluded_mask]
-    return series.mask(series.index.isin(excluded.index)), excluded
 
 
 def resolve_relative_step(series, step_opt, tinfo):
@@ -746,7 +666,9 @@ def regularize(
             )
         if report:
             gs.message(
-                _("Inferred a regular frequency of '{}' from the data.").format(inferred)
+                _("Inferred a regular frequency of '{}' from the data.").format(
+                    inferred
+                )
             )
         resampled = series.asfreq(inferred)
 

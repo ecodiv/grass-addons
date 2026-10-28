@@ -4,11 +4,13 @@
 #
 # MODULE:       t.rast.stl2ca
 # AUTHOR:       Paulo van Breugel
-# PURPOSE:      Extracts the time series of two areas from the same
+# PURPOSE:      Extracts the time series of every category of a
+#               classification (a CELL raster's own cell values, or a
+#               vector map grouped by an attribute column) from the same
 #               space-time raster dataset (strds), regularizes each onto an
 #               evenly spaced axis, runs an STL decomposition
-#               (seasonal / trend / remainder) on each and produces a
-#               multi-panel plot comparing the two areas.
+#               (seasonal / trend / remainder) on each, and plots all
+#               categories together on one multi-panel figure.
 #
 # COPYRIGHT:    (c) 2026 Paulo van Breugel and the GRASS Development Team
 #               This program is free software under the GNU General Public
@@ -18,7 +20,7 @@
 #############################################################################
 
 # %module
-# % description: STL decomposition (seasonal/trend/remainder) comparing the time series of two areas of the same strds
+# % description: STL decomposition (seasonal/trend/remainder) of a strds for every category of a classification raster or vector
 # % keyword: temporal
 # % keyword: raster
 # % keyword: time series
@@ -33,59 +35,49 @@
 # % guisection: Input
 # %end
 
-# %option G_OPT_M_COORDS
-# % key: coordinates
-# % required: no
-# % label: Area 1: point coordinates (east,north)
-# % description: Comma separated pair of map coordinates of the point to extract for area 1. In the GUI (launched from a Map Display) the value can be filled by clicking in the display. Mutually exclusive with 'zone' and 'raster'.
-# % guisection: Area 1
-# %end
-
-# %option G_OPT_V_INPUT
-# % key: zone
-# % required: no
-# % label: Area 1: vector map defining the sampling area
-# % description: Vector map (points, lines or polygons) defining the area-1 sampling area. All features in the map are rasterized and pooled into a single sample; use v.extract beforehand to pre-select a subset of features. Mutually exclusive with 'coordinates' and 'raster'.
-# % guisection: Area 1
-# %end
-
 # %option G_OPT_R_INPUT
 # % key: raster
 # % required: no
-# % label: Area 1: raster map defining the sampling area
-# % description: Raster map whose non-null cells define the area-1 sampling area; cell values are ignored. All non-null cells are pooled into a single sample. Mutually exclusive with 'coordinates' and 'zone'.
-# % guisection: Area 1
+# % label: Categories raster
+# % description: CELL raster whose distinct cell values define the categories; each is sampled as its own zone. Mutually exclusive with 'map'.
+# % guisection: Input
 # %end
 
-# %option G_OPT_M_COORDS
-# % key: coordinates2
+# %option G_OPT_V_MAP
+# % key: map
 # % required: no
-# % label: Area 2: point coordinates (east,north)
-# % description: Comma separated pair of map coordinates of the point to extract for area 2. Mutually exclusive with 'zone2' and 'raster2'.
-# % guisection: Area 2
+# % label: Categories vector map
+# % description: Vector map whose features define the categories, grouped by 'column'. Mutually exclusive with 'raster'.
+# % guisection: Input
 # %end
 
-# %option G_OPT_V_INPUT
-# % key: zone2
-# % required: no
-# % label: Area 2: vector map defining the sampling area
-# % description: Vector map (points, lines or polygons) defining the area-2 sampling area, sampled the same way as 'zone'. Mutually exclusive with 'coordinates2' and 'raster2'.
-# % guisection: Area 2
+# %option G_OPT_V_FIELD
+# % key: layer
+# % guisection: Input
 # %end
 
-# %option G_OPT_R_INPUT
-# % key: raster2
+# %option G_OPT_DB_COLUMN
+# % key: column
+# % label: Category column
+# % description: Attribute column (of 'map', given 'layer') grouping features into categories; features sharing a value become one category, labelled with that value. Defaults to 'cat', i.e. one category per feature. Ignored when 'raster' is used.
+# % guisection: Input
+# %end
+
+# %option
+# % key: categories
+# % type: string
+# % label: Categories to process
+# % description: Category value(s) or label(s) to restrict processing to (comma separated). Unset processes every distinct category found.
+# % multiple: yes
 # % required: no
-# % label: Area 2: raster map defining the sampling area
-# % description: Raster map whose non-null cells define the area-2 sampling area, sampled the same way as 'raster'. Mutually exclusive with 'coordinates2' and 'zone2'.
-# % guisection: Area 2
+# % guisection: Input
 # %end
 
 # %option
 # % key: statistic
 # % type: string
 # % label: Pixel aggregation statistic
-# % description: Statistic used to summarize the pixels within each area at each timestep, the same for both areas so the comparison is fair. 'mean', 'min' and 'max' use a single, cheap t.rast.univar call. 'median' and 'percentile' are more robust to outlier/contaminated pixels but require t.rast.univar's extended-statistics mode, which sorts all cell values in memory for each map; this is a real memory cost on very large rasters.
+# % description: Statistic used to summarize the pixels within each category at each timestep. 'mean', 'min' and 'max' use a single, cheap t.rast.univar call. 'median' and 'percentile' are more robust to outlier/contaminated pixels but require t.rast.univar's extended-statistics mode, which sorts all cell values in memory for each map; this is a real memory cost on very large rasters.
 # % options: mean,median,min,max,percentile
 # % answer: mean
 # % required: no
@@ -96,7 +88,7 @@
 # % key: percentile_value
 # % type: double
 # % label: Percentile to use as the statistic
-# % description: Percentile (0-100) summarizing the pixels within each area at each timestep. Only used when 'statistic' is 'percentile'.
+# % description: Percentile (0-100) summarizing the pixels within each category at each timestep. Only used when 'statistic' is 'percentile'.
 # % options: 0-100
 # % required: no
 # % guisection: Input
@@ -136,24 +128,6 @@
 # % type: integer
 # % label: Interpolation order
 # % description: Order for the spline/polynomial interpolation methods (ignored otherwise).
-# % required: no
-# % guisection: Regularization
-# %end
-
-# %option
-# % key: temporal_outliers
-# % type: string
-# % label: Temporal-outlier filter for area 1
-# % description: 'threshold,window' flags and excludes isolated, transient excursions before the analysis, tracking a running peak (or trough) and following the signal away from it, the same running-extremum approach t.rast.event uses to detect disturbance/recovery events. A descent (or ascent) is confirmed, and its entire span excluded, once it has moved at least 'threshold' away from that running reference (in the data's own units, e.g. 0.3 NDVI units) and the series is then seen to come back close to the reference again, within 'window' of leaving it (calendar days for absolute time, time steps for relative time) -- as opposed to a genuine, sustained change, which is left untouched. The removed values are dropped before STL/trend, filled in like any other gap, and still marked on the Observed panel. See the manual for the full rule.
-# % required: no
-# % guisection: Regularization
-# %end
-
-# %option
-# % key: temporal_outliers2
-# % type: string
-# % label: Temporal-outlier filter for area 2
-# % description: Same as 'temporal_outliers', applied to area 2.
 # % required: no
 # % guisection: Regularization
 # %end
@@ -265,23 +239,9 @@
 # %end
 
 # %flag
-# % key: o
-# % label: OLS trend line
-# % description: Add the ordinary least-squares (OLS) regression line (slope and R^2) to the trend panel.
-# % guisection: Trend line
-# %end
-
-# %flag
 # % key: s
 # % label: Theil-Sen trend line
-# % description: Add the robust Theil-Sen regression line (slope and Mann-Kendall p-value) to the trend panel.
-# % guisection: Trend line
-# %end
-
-# %flag
-# % key: t
-# % label: Trend-line statistics in plot
-# % description: Show the trend-line statistics (slope, R^2, Mann-Kendall p-value) in the plot legend. They are always printed to the terminal regardless of this flag.
+# % description: Draw the robust Theil-Sen regression line on the Trend panel, in each category's own color. Its slope/Mann-Kendall p-value are always available via 'stats_output' regardless of this flag.
 # % guisection: Trend line
 # %end
 
@@ -289,7 +249,7 @@
 # % key: slope_unit
 # % type: string
 # % label: Reporting unit for trend slopes
-# % description: Time unit the reported OLS/Theil-Sen slopes are expressed per (value change per unit). 'auto' picks a readable calendar unit (day/week/month/year) from the series span for absolute-time data; 'step' keeps the value change per observation step (per frequency/step). For relative-time data only 'auto' and 'step' apply.
+# % description: Time unit the slopes reported in 'stats_output' are expressed per (value change per unit). 'auto' picks a readable calendar unit (day/week/month/year) from the series span for absolute-time data; 'step' keeps the value change per observation step (per frequency/step). For relative-time data only 'auto' and 'step' apply.
 # % options: auto,step,day,week,month,year
 # % answer: auto
 # % required: no
@@ -321,10 +281,20 @@
 # % key: plots
 # % type: string
 # % label: Panels to include in the figure
-# % description: Which decomposition panels to draw, as a comma separated subset of observed, trend, seasonal and residual. Omitted panels are left out of the figure; at least one panel is required. The trend regression lines are only drawn when the trend panel is included.
+# % description: Which decomposition panels to draw, as a comma separated subset of observed, trend, seasonal and residual. Omitted panels are left out of the figure; at least one panel is required. The Theil-Sen trend line is only drawn when the trend panel is included.
 # % options: observed,trend,seasonal,residual
 # % multiple: yes
 # % answer: observed,trend,seasonal,residual
+# % required: no
+# % guisection: Plotting
+# %end
+
+# %option
+# % key: colormap
+# % type: string
+# % label: Category colormap
+# % description: Matplotlib colormap assigning each category its own color. Falls back to sampling the continuous 'viridis' colormap once there are more categories than the chosen colormap has distinct colors.
+# % answer: tab10
 # % required: no
 # % guisection: Plotting
 # %end
@@ -368,14 +338,7 @@
 # %flag
 # % key: d
 # % label: Show pixel-value spread band
-# % description: Shade a band around the Observed series showing the spread of pixel values within an area at each timestep: +/-1 standard deviation for the 'mean' statistic, or the interquartile range (25th-75th percentile) for the 'median' statistic. Only valid with 'statistic=mean' or 'statistic=median'; only drawn for whichever area(s) are defined by 'zone'/'raster'/'zone2'/'raster2' rather than a point.
-# % guisection: Plotting
-# %end
-
-# %flag
-# % key: e
-# % label: Hide outlier markers
-# % description: Do not draw the markers for values excluded by 'temporal_outliers'/'temporal_outliers2' on the Observed panel (no effect if neither option is set, or none were excluded). The Observed panel's y-axis is then left to autoscale to the plotted (gap-filled) series only, instead of being stretched to also fit the hidden outlier values.
+# % description: Shade a band around each category's Observed series showing the spread of pixel values within it at each timestep: +/-1 standard deviation for the 'mean' statistic, or the interquartile range (25th-75th percentile) for the 'median' statistic. Only valid with 'statistic=mean'/'statistic=median'.
 # % guisection: Plotting
 # %end
 
@@ -383,7 +346,7 @@
 # % key: min_pixels
 # % type: integer
 # % label: Minimum pixel count for the spread band
-# % description: At timesteps where fewer than this many non-null pixels contributed to an area's statistic, the spread band (-d) is left out and interpolated like any other gap, instead of plotting it. A standard deviation or interquartile range estimated from very few pixels is unreliable and can spike far beyond the genuine spread, most visibly on near-total-cloud timesteps where only a handful of pixels survive. Only meaningful with -d.
+# % description: At timesteps where fewer than this many non-null pixels contributed to a category's statistic, the spread band (-d) is left out and interpolated like any other gap, instead of plotting it. A standard deviation or interquartile range estimated from very few pixels is unreliable and can spike far beyond the genuine spread, most visibly on near-total-cloud timesteps where only a handful of pixels survive. Only meaningful with -d.
 # % required: no
 # % guisection: Plotting
 # %end
@@ -394,26 +357,6 @@
 # % label: Seasonal amplitude envelope percentile
 # % description: Draw a rolling envelope of the seasonal component (a centered window one seasonal period wide) on the Seasonal panel, showing how the seasonal amplitude changes over time. The value is the fraction trimmed from each end of the window before taking the envelope, e.g. '0.1' uses the 10th/90th percentile instead of the min/max, to avoid outliers dominating the envelope; '0' uses the plain min/max. Unset disables the envelope.
 # % required: no
-# % guisection: Plotting
-# %end
-
-# %option G_OPT_CN
-# % key: color
-# % type: string
-# % label: Line color for area 1
-# % description: Color of the area-1 series lines. Accepts a GRASS color name (e.g. 'blue'), an R:G:B triplet (e.g. '0:0:255'), or any matplotlib color such as a hex code ('#1f77b4') or 'tab:' name. The trend-regression lines for this area are drawn in a matching darker/lighter family. Defaults to the Matplotlib default.
-# % required: no
-# % answer:
-# % guisection: Plotting
-# %end
-
-# %option G_OPT_CN
-# % key: color2
-# % type: string
-# % label: Line color for area 2
-# % description: Color of the area-2 series lines. Accepts a GRASS color name, an R:G:B triplet, or any matplotlib color (hex code or 'tab:' name). Its trend-regression lines use a matching family. Defaults to the Matplotlib default.
-# % required: no
-# % answer:
 # % guisection: Plotting
 # %end
 
@@ -437,11 +380,18 @@
 # % guisection: Plotting
 # %end
 
+# %flag
+# % key: i
+# % label: Interactive HTML plot
+# % description: Write an interactive Plotly HTML plot instead of a static image. 'output' must then end in '.html' (or be omitted, opening the plot in a browser tab instead). 'backend', 'dpi', 'plot_dimensions' and 'style' do not apply here and are ignored. Click a category's legend entry to highlight it (click more entries to highlight several; click them again to go back to all categories shown normally); drag across any panel to zoom into a time range (all panels zoom together, since 'plots' still chooses which ones are drawn).
+# % guisection: Output
+# %end
+
 # %option G_OPT_F_OUTPUT
 # % key: output
 # % required: no
 # % label: Name of output plot file
-# % description: Output image file. The format is taken from the extension (e.g. .png, .pdf, .svg). If omitted, the plot is shown in an interactive window.
+# % description: Output image file. The format is taken from the extension (e.g. .png, .pdf, .svg; .html with '-i'). If omitted, the plot is shown in an interactive window (a browser tab with '-i').
 # % guisection: Output
 # %end
 
@@ -474,19 +424,24 @@
 # % guisection: Output
 # %end
 
+# %option G_OPT_F_OUTPUT
+# % key: stats_output
+# % required: no
+# % label: Name of output trend-statistics CSV file
+# % description: Writes the Theil-Sen/Mann-Kendall trend statistics (slope, tau, p-value) to this CSV file, one row per category (one row per 'breakpoints' segment too, when given). If omitted, these statistics are not written anywhere.
+# % guisection: Output
+# %end
+
 # %option G_OPT_M_NPROCS
-# % description: Number of parallel processes. For a point ('coordinates'/'coordinates2') this has no effect. For an area ('zone'/'raster'/'zone2'/'raster2') it is forwarded to t.rast.univar's zonal extraction.
+# % description: Number of parallel processes, forwarded to t.rast.univar's zonal extraction.
 # %end
 
 # %option G_OPT_T_WHERE
 # %end
 
 # %rules
-# % exclusive: coordinates, zone, raster
-# % required: coordinates, zone, raster
-# % exclusive: coordinates2, zone2, raster2
-# % required: coordinates2, zone2, raster2
-# % requires: -d, zone, raster, zone2, raster2
+# % exclusive: raster, map
+# % required: raster, map
 # % requires: min_pixels, -d
 # % requires: vlines_labels, vlines
 # %end
@@ -515,25 +470,24 @@ set_path("t.rast.stl2ca")
 import extract  # noqa: E402
 import trend  # noqa: E402
 import plot  # noqa: E402
+import interactive  # noqa: E402
 from extract import (  # noqa: E402
     clean_dirs,
     clean_rasters,
-    coords_from_option,
-    validate_zone,
-    make_zone_raster,
-    zone_bbox_center,
-    validate_raster,
-    make_raster_zone,
-    raster_bbox_center,
-    extract_series,
-    extract_zonal_series,
+    validate_category_raster,
+    validate_vector,
+    shrink_region_to_raster,
+    shrink_region_to_vector,
+    vector_category_raster,
+    discover_categories,
+    filter_categories,
+    extract_zonal_series_multi,
     build_series,
-    parse_temporal_outliers,
-    detect_temporal_outliers,
     regularize,
 )
-from trend import decompose_and_fit, validate_odd_window  # noqa: E402
-from plot import apply_style, grass_color_to_mpl, plot_result, parse_vlines  # noqa: E402
+from trend import decompose_and_fit, validate_odd_window, write_trend_stats_csv  # noqa: E402
+from plot import apply_style, plot_result, parse_vlines  # noqa: E402
+from interactive import plot_interactive  # noqa: E402
 
 
 def cleanup():
@@ -541,9 +495,17 @@ def cleanup():
     for path in clean_dirs:
         gs.try_rmdir(path)
     if clean_rasters:
-        gs.run_command(
-            "g.remove", flags="f", type="raster", name=clean_rasters, quiet=True
-        )
+        # vector_category_raster() can register a reclass raster alongside
+        # the base map it was built from, and g.remove refuses to remove a
+        # base map while a reclass of it still exists -- regardless of the
+        # order the two names are given in one call. Two passes clear it:
+        # the first removes the reclass map(s), unblocking the base map(s)
+        # for the second (a g.remove of an already-removed name is a
+        # harmless no-op warning).
+        for _ in range(2):
+            gs.run_command(
+                "g.remove", flags="f", type="raster", name=clean_rasters, quiet=True
+            )
 
 
 def lazy_import_py_modules(backend="WXAgg"):
@@ -614,10 +576,31 @@ def lazy_import_py_modules(backend="WXAgg"):
     plot.plt = plt
 
 
+def lazy_import_plotly():
+    """Lazy import of Plotly, needed only for the '-i' (interactive HTML)
+    output mode -- kept separate from lazy_import_py_modules() so an
+    ordinary Matplotlib run never requires Plotly to be installed.
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ModuleNotFoundError:
+        gs.fatal(
+            _(
+                "The Python package 'plotly' is required for the '-i' "
+                "(interactive HTML) output but is not installed. Install "
+                "it with e.g. 'pip install plotly'."
+            )
+        )
+
+    interactive.go = go
+    interactive.make_subplots = make_subplots
+
+
 def validate_options(options, flags, temporal_type):
     """Validate option values that depend only on user input (and the cheap
     t.info temporal type), so the module fails fast before the potentially
-    expensive t.rast.what/t.rast.univar sampling step.
+    expensive t.rast.univar sampling step.
 
     Checks performed here:
       * seasonal / trend / low_pass are odd integers >= their minimum
@@ -625,10 +608,11 @@ def validate_options(options, flags, temporal_type):
       * spline / polynomial interpolation requires 'order'
       * a relative-time 'step' override is a positive integer
       * an absolute-time 'frequency' is a valid pandas offset alias
-      * temporal_outliers/temporal_outliers2 parse as 'threshold,window'
       * statistic=percentile requires percentile_value
       * the -d (dispersion band) flag only applies to statistic=mean/median
       * min_pixels, when given, is a positive integer
+      * with -i, output (if given) ends in '.html'; warn about any
+        Matplotlib-only option/flag that has nothing to do there
 
     Data-dependent checks (period vs. length, gaps after interpolation, etc.)
     are intentionally left to run later, once the series is available.
@@ -637,14 +621,12 @@ def validate_options(options, flags, temporal_type):
     :param dict flags: parsed module flags
     :param str temporal_type: 'absolute' or 'relative' (from t.info)
     """
-    # statistic=percentile needs an explicit percentile_value; the dispersion
-    # band (-d) has no natural paired spread value outside mean/median, so it
-    # is restricted to those two statistics rather than silently showing a
-    # misleading band.
     statistic = options["statistic"]
     if statistic == "percentile" and not options["percentile_value"]:
         gs.fatal(
-            _("The 'percentile_value' option is required when 'statistic' is 'percentile'.")
+            _(
+                "The 'percentile_value' option is required when 'statistic' is 'percentile'."
+            )
         )
     if flags["d"] and statistic not in ("mean", "median"):
         gs.fatal(
@@ -655,6 +637,27 @@ def validate_options(options, flags, temporal_type):
         )
     if options["min_pixels"] and int(options["min_pixels"]) < 1:
         gs.fatal(_("The 'min_pixels' option must be a positive integer."))
+
+    # Interactive (-i) HTML output: 'output' (if given) must be an .html
+    # path, and the Matplotlib-only options/flags have nothing to do there.
+    if flags["i"]:
+        if options["output"] and not options["output"].lower().endswith(".html"):
+            gs.fatal(_("The 'output' file must end in '.html' when '-i' is set."))
+        ignored = [
+            name
+            for name, value in (
+                ("backend", options["backend"]),
+                ("plot_dimensions", options["plot_dimensions"]),
+                ("style", options["style"]),
+            )
+            if value
+        ]
+        if ignored:
+            gs.warning(
+                _("Ignored with '-i' (interactive HTML output): {}.").format(
+                    ", ".join(ignored)
+                )
+            )
 
     # STL LOESS window lengths: odd integers, each with its own minimum.
     validate_odd_window(options["seasonal"], "seasonal", 7)
@@ -709,91 +712,64 @@ def validate_options(options, flags, temporal_type):
                 ).format(v=options["frequency"])
             )
 
-    # temporal_outliers / temporal_outliers2, when given, must parse as
-    # 'threshold,window'.
-    parse_temporal_outliers(options["temporal_outliers"], "temporal_outliers")
-    parse_temporal_outliers(options["temporal_outliers2"], "temporal_outliers2")
 
-    # Line colours, when given, must be valid GRASS colour specs that map to a
-    # colour matplotlib understands (a named colour or an R:G:B[:A] triplet).
-    import matplotlib.colors as _mcolors
-
-    for key in ("color", "color2"):
-        if options.get(key):
-            try:
-                converted = grass_color_to_mpl(options[key])
-                # None means 'none' (no explicit colour) -> acceptable.
-                ok = converted is None or _mcolors.is_color_like(converted)
-            except ValueError:
-                ok = False
-            if not ok:
-                gs.fatal(
-                    _(
-                        "'{k}' value '{v}' is not a valid colour. Use a GRASS "
-                        "colour name (e.g. 'blue'), an R:G:B triplet with each "
-                        "component in 0-255 (e.g. '0:0:255'), or any matplotlib "
-                        "colour such as a hex code ('#1f77b4') or 'tab:' name."
-                    ).format(k=key, v=options[key])
-                )
-
-
-def resolve_area(options, suffix, statistic):
-    """Resolve one area= option group into a sampling area.
-
-    Mirrors t.rast.stl's single area lookup (point, or a zone rasterized
-    from a vector map, or a zone taken from a raster's non-null cells); here
-    it is called twice, once per area, with ``suffix`` selecting which
-    option group to read ('' for area 1, '2' for area 2).
+def resolve_category_raster(options):
+    """Resolve the raster=/map=+layer=+column= option group into a
+    categories raster and the categories to process.
 
     :param dict options: parsed module options
-    :param str suffix: '' for area 1, '2' for area 2
-    :param str statistic: the statistic= option value, for the terminal message
-    :return tuple: (zone_raster_or_None, east, north, label) where label is
-        the zone/raster map name (mapset stripped) or the point coordinates,
-        used in terminal messages and as the plot legend entry
+    :return tuple: (zone_raster, categories) where categories is a list of
+        (int value, str label) tuples in ascending value order, restricted
+        to 'categories=' when given
     """
-    coordinates = options["coordinates" + suffix]
-    zone = options["zone" + suffix]
-    raster = options["raster" + suffix]
+    raster = options["raster"]
+    vector = options["map"]
 
-    if zone:
-        validate_zone(zone)
-        zone_raster = make_zone_raster(zone)
-        east, north = zone_bbox_center(zone)
-        label = zone.split("@")[0]
-        gs.message(
-            _(
-                "Using zone '{}' ({} statistic; bbox center for tagging: "
-                "east={}, north={})."
-            ).format(zone, statistic, east, north)
-        )
-    elif raster:
-        validate_raster(raster)
-        zone_raster = make_raster_zone(raster)
-        east, north = raster_bbox_center(raster)
-        label = raster.split("@")[0]
-        gs.message(
-            _(
-                "Using raster '{}' non-null cells ({} statistic; bbox center "
-                "for tagging: east={}, north={})."
-            ).format(raster, statistic, east, north)
-        )
+    # Shrink the computational region to the categories' own extent before
+    # building the zone raster and sampling the strds (see
+    # shrink_region_to_raster()/shrink_region_to_vector() in extract.py):
+    # this only reduces how much v.to.rast/t.rast.univar have to sweep, it
+    # never changes a result. use_temp_region() is process-local and
+    # restores itself when the process exits, so the user's own region is
+    # never touched.
+    gs.use_temp_region()
+
+    if raster:
+        zone_raster = validate_category_raster(raster)
+        shrink_region_to_raster(zone_raster)
+        gs.message(_("Using the categories of raster '{}'.").format(raster))
     else:
-        east, north = coords_from_option(coordinates)
-        zone_raster = None
-        label = "{},{}".format(east, north)
-        gs.message(_("Using point (east, north) = ({}, {})").format(east, north))
+        vector_full = validate_vector(vector)
+        layer = options["layer"]
+        column = options["column"] or "cat"
+        shrink_region_to_vector(vector_full)
+        zone_raster = vector_category_raster(vector_full, layer, column)
+        gs.message(
+            _("Using vector '{v}' grouped by column '{c}' (layer {l}).").format(
+                v=vector, c=column, l=layer
+            )
+        )
 
-    return zone_raster, east, north, label
+    categories = discover_categories(zone_raster)
+    categories = filter_categories(categories, options["categories"])
+    gs.message(
+        _("Processing {n} category/categories: {labels}.").format(
+            n=len(categories), labels=", ".join(label for _value, label in categories)
+        )
+    )
+    return zone_raster, categories
 
 
 def main(options, flags):
-    """Extract two area series from one strds and compare their STL decompositions."""
+    """Extract one series per category from one strds and plot their STL
+    decompositions together."""
 
     output = options["output"]
     backend_opt = options["backend"]
     statistic = options["statistic"]
-    percentile_value = float(options["percentile_value"]) if options["percentile_value"] else None
+    percentile_value = (
+        float(options["percentile_value"]) if options["percentile_value"] else None
+    )
     strds = options["strds"]
     where = options["where"]
     nprocs = int(options["nprocs"]) if options["nprocs"] else 1
@@ -803,7 +779,7 @@ def main(options, flags):
     step = options["step"]
     period_opt = options["period"]
     seasonal = options["seasonal"]
-    trend = options["trend"]
+    trend_window = options["trend"]
     low_pass = options["low_pass"]
     seasonal_degree = options["seasonal_degree"]
     trend_degree = options["trend_degree"]
@@ -817,6 +793,8 @@ def main(options, flags):
     plot_dimensions = options["plot_dimensions"]
     plots = [p for p in options["plots"].split(",") if p] if options["plots"] else []
     dpi = float(options["dpi"]) if options["dpi"] else 300
+    colormap = options["colormap"]
+    stats_output = options["stats_output"]
     envelope_percentile = None
     if options["seasonal_envelope"]:
         envelope_percentile = float(options["seasonal_envelope"])
@@ -824,14 +802,9 @@ def main(options, flags):
             gs.fatal(_("The 'seasonal_envelope' option must be >= 0 and < 0.5."))
 
     robust = flags["r"]
-    show_ols = flags["o"]
     show_sen = flags["s"]
-    show_stats = flags["t"]
     show_dispersion = flags["d"]
-    hide_outliers = flags["e"]
     min_pixels = int(options["min_pixels"]) if options["min_pixels"] else None
-    line_color = grass_color_to_mpl(options["color"]) if options["color"] else None
-    line_color2 = grass_color_to_mpl(options["color2"]) if options["color2"] else None
     fontsize = float(options["fontsize"]) if options["fontsize"] else None
     line_width = float(options["line_width"]) if options["line_width"] else None
     title = options["title"]
@@ -844,22 +817,12 @@ def main(options, flags):
     else:
         backend = "WXAgg"
     lazy_import_py_modules(backend=backend)
+    if flags["i"]:
+        lazy_import_plotly()
     apply_style(options["style"])
 
-    # A nudge, not a fatal error: the two areas are allowed to be the same
-    # (e.g. while testing), but the resulting comparison is trivial.
-    if (
-        (options["coordinates"] and options["coordinates"] == options["coordinates2"])
-        or (options["zone"] and options["zone"] == options["zone2"])
-        or (options["raster"] and options["raster"] == options["raster2"])
-    ):
-        gs.warning(_("Area 1 and area 2 are the same; the comparison will be trivial."))
-
-    # Resolve the two sampling areas: each is either a point, a zone
-    # rasterized from a vector map, or a zone taken from a raster's non-null
-    # cells (all pooled into a single sample).
-    area1 = resolve_area(options, "", statistic)
-    area2 = resolve_area(options, "2", statistic)
+    if colormap not in plot.plt.colormaps():
+        gs.fatal(_("'{}' is not a known Matplotlib colormap.").format(colormap))
 
     # Check if the strds exists and read its temporal type.
     try:
@@ -878,7 +841,7 @@ def main(options, flags):
 
     stl_kwargs = {
         "seasonal": seasonal,
-        "trend": trend,
+        "trend": trend_window,
         "low_pass": low_pass,
         "seasonal_deg": seasonal_degree,
         "trend_deg": trend_degree,
@@ -889,85 +852,50 @@ def main(options, flags):
         "robust": robust,
     }
 
-    # Extract -> regularize -> decompose/fit each area. The terminal messages
-    # for each are prefixed with its label so the two analyses can be told
-    # apart.
-    outliers_keys = ("temporal_outliers", "temporal_outliers2")
-    results = []
-    bands = []
-    envelopes = []
-    excluded_points = []
-    for index, (zone_raster, east, north, label) in enumerate((area1, area2)):
-        if zone_raster:
-            gs.message(_("Extracting the zonal time series for '{}'...").format(label))
-            ds_dates, ds_values, ds_lower, ds_upper, ds_pixel_counts = extract_zonal_series(
-                strds=strds,
-                zone_raster=zone_raster,
-                where=where,
-                statistic=statistic,
-                nprocs=nprocs,
-                want_dispersion=show_dispersion,
-                percentile_value=percentile_value,
+    zone_raster, category_list = resolve_category_raster(options)
+
+    gs.message(_("Extracting the zonal time series for all categories..."))
+    extracted = extract_zonal_series_multi(
+        strds=strds,
+        zone_raster=zone_raster,
+        where=where,
+        statistic=statistic,
+        nprocs=nprocs,
+        want_dispersion=show_dispersion,
+        percentile_value=percentile_value,
+    )
+
+    # Extract -> regularize -> decompose/fit each category. Each category
+    # that comes back empty (no overlap with the strds, or all-null) is
+    # skipped with a warning rather than aborting the whole run, since the
+    # other categories may well still be usable.
+    categories = []
+    for value, label in category_list:
+        if value not in extracted:
+            gs.warning(
+                _("No data extracted for category '{}'; skipping.").format(label)
             )
-        else:
-            gs.message(_("Extracting the point time series for '{}'...").format(label))
-            ds_dates, ds_values = extract_series(
-                strds=strds,
-                east=east,
-                north=north,
-                where=where,
-                nprocs=nprocs,
-            )
-            ds_lower = ds_upper = ds_pixel_counts = None
+            continue
+        ds_dates, ds_values, ds_lower, ds_upper, ds_pixel_counts = extracted[value]
 
         ds_series = build_series(ds_dates, ds_values, temporal_type=temporal_type)
         n_valid = int(ds_series.notna().sum())
         gs.message(
-            _("Extracted {n} timesteps ({v} non-null).").format(
-                n=len(ds_series), v=n_valid
+            _("[{d}] Extracted {n} timesteps ({v} non-null).").format(
+                d=label, n=len(ds_series), v=n_valid
             )
         )
         if n_valid == 0:
-            gs.fatal(
-                _(
-                    "All extracted values are NULL for '{}'; nothing to "
-                    "decompose."
-                ).format(label)
+            gs.warning(
+                _("All extracted values are NULL for category '{}'; skipping.").format(
+                    label
+                )
             )
+            continue
 
-        outliers_key = outliers_keys[index]
-        ds_outliers = parse_temporal_outliers(options[outliers_key], outliers_key)
-        if ds_outliers is not None:
-            ds_threshold, ds_window = ds_outliers
-            ds_series, ds_excluded = detect_temporal_outliers(
-                ds_series, ds_threshold, ds_window, temporal_type=temporal_type
-            )
-        else:
-            ds_excluded = ds_series.iloc[0:0]
-        if len(ds_excluded):
-            gs.message(
-                _(
-                    "Flagged {n} value(s) in '{d}' as transient temporal "
-                    "outliers (threshold={t}, window={w}); linearly "
-                    "interpolated."
-                ).format(n=len(ds_excluded), d=label, t=ds_threshold, w=ds_window)
-            )
-            # Fill just these dates with linear interpolation now, ahead of
-            # the 'interpolation' method below. An excursion can span many
-            # steps (up to 'window'), and a curvature-fitting method
-            # (quadratic, cubic, spline...) bridging a gap that wide can
-            # overshoot past either neighbour, undoing the whole point of
-            # excluding the outlier by replacing it with a different,
-            # possibly larger artifact. Linear is bounded by its two
-            # neighbours and cannot do that. Genuine gaps (still NaN here)
-            # are left for the chosen 'interpolation' method, unchanged.
-            linear_filled = ds_series.interpolate(
-                method="linear", limit_direction="both"
-            )
-            ds_series.loc[ds_excluded.index] = linear_filled.loc[ds_excluded.index]
-        excluded_points.append(ds_excluded)
-
-        gs.message(_("Regularizing the series and interpolating gaps..."))
+        gs.message(
+            _("[{d}] Regularizing the series and interpolating gaps...").format(d=label)
+        )
         ds_regular = regularize(
             series=ds_series,
             frequency=frequency,
@@ -983,22 +911,17 @@ def main(options, flags):
         # through decompose_and_fit()/STL.
         ds_band_lower = ds_band_upper = None
         if ds_lower is not None:
-            ds_lower_series = build_series(ds_dates, ds_lower, temporal_type=temporal_type)
-            ds_upper_series = build_series(ds_dates, ds_upper, temporal_type=temporal_type)
-            if len(ds_excluded):
-                # Blank the band at the same dates excluded from the main
-                # series, so it is interpolated through them too instead of
-                # still showing the raw (possibly contaminated) pixel spread
-                # at a timestep the series itself no longer shows as data.
-                excluded_dates = ds_lower_series.index.isin(ds_excluded.index)
-                ds_lower_series = ds_lower_series.mask(excluded_dates)
-                ds_upper_series = ds_upper_series.mask(excluded_dates)
+            ds_lower_series = build_series(
+                ds_dates, ds_lower, temporal_type=temporal_type
+            )
+            ds_upper_series = build_series(
+                ds_dates, ds_upper, temporal_type=temporal_type
+            )
             if min_pixels is not None and ds_pixel_counts is not None:
                 # A spread computed from very few pixels is a poor estimate
                 # and can spike far past the genuine spread -- typically a
                 # near-total-cloud timestep where only a handful of pixels
-                # survive -- even though the mean/median itself (and so
-                # temporal_outliers, which only watches that) looks normal.
+                # survive -- even though the mean/median itself looks normal.
                 ds_count_series = build_series(
                     ds_dates, ds_pixel_counts, temporal_type=temporal_type
                 )
@@ -1007,9 +930,9 @@ def main(options, flags):
                 if n_low_count:
                     gs.message(
                         _(
-                            "Spread band left out at {n} timestep(s) in '{d}' "
-                            "with fewer than {m} non-null pixels."
-                        ).format(n=n_low_count, d=label, m=min_pixels)
+                            "[{d}] Spread band left out at {n} timestep(s) with "
+                            "fewer than {m} non-null pixels."
+                        ).format(d=label, n=n_low_count, m=min_pixels)
                     )
                     ds_lower_series = ds_lower_series.mask(low_count_dates)
                     ds_upper_series = ds_upper_series.mask(low_count_dates)
@@ -1017,9 +940,8 @@ def main(options, flags):
             # curvature-fitting method (quadratic, cubic, spline...) can
             # overshoot past either neighbour when bridging a gap, which for
             # a dispersion band means manufacturing a bulge wider than the
-            # genuine spread on either side -- most visibly across the
-            # multi-step spans temporal_outliers excludes. Linear is bounded
-            # by its two neighbours and cannot do that.
+            # genuine spread on either side. Linear is bounded by its two
+            # neighbours and cannot do that.
             ds_band_lower = regularize(
                 series=ds_lower_series,
                 frequency=frequency,
@@ -1040,7 +962,6 @@ def main(options, flags):
                 tinfo=tinfo,
                 report=False,
             )
-        bands.append((ds_band_lower, ds_band_upper))
 
         (
             ds_result,
@@ -1055,7 +976,7 @@ def main(options, flags):
             tinfo,
             stl_kwargs,
             trend_trim,
-            show_ols,
+            False,  # show_ols: dropped from this addon's interface
             show_sen,
             False,  # show_gam: not exposed in this addon's interface
             None,  # gam_direction: unused when show_gam is False
@@ -1066,73 +987,65 @@ def main(options, flags):
             envelope_percentile=envelope_percentile,
             breakpoints_opt=breakpoints_opt,
         )
-        results.append((ds_result, ds_trend_fit, ds_trend_fit_segments))
-        envelopes.append((ds_envelope_lower, ds_envelope_upper))
+        categories.append(
+            {
+                "label": label,
+                "result": ds_result,
+                "trend_fit": ds_trend_fit,
+                "trend_fit_segments": ds_trend_fit_segments,
+                "band_lower": ds_band_lower,
+                "band_upper": ds_band_upper,
+                "envelope_lower": ds_envelope_lower,
+                "envelope_upper": ds_envelope_upper,
+            }
+        )
 
-    result, trend_fit, trend_fit_segments = results[0]
-    result2, trend_fit2, trend_fit_segments2 = results[1]
-    band_lower, band_upper = bands[0]
-    band_lower2, band_upper2 = bands[1]
-    band_label = None
-    if show_dispersion:
-        band_label = _("± 1 SD") if statistic == "mean" else _("IQR (25-75%)")
-    envelope_lower, envelope_upper = envelopes[0]
-    envelope_lower2, envelope_upper2 = envelopes[1]
-    if hide_outliers:
-        excluded = excluded2 = None
-    else:
-        excluded = excluded_points[0]
-        excluded2 = excluded_points[1]
+    if not categories:
+        gs.fatal(_("No category had usable data; nothing to plot."))
 
-    # Plot (save-by-extension or show).
+    # Plot: interactive HTML (-i) or the static Matplotlib figure
+    # (save-by-extension or show).
     gs.message(_("Creating the figure..."))
-    if plot_dimensions:
-        dimensions = [float(x) for x in plot_dimensions.split(",")]
+    if flags["i"]:
+        plot_interactive(
+            categories=categories,
+            output=output,
+            temporal_type=temporal_type,
+            plots=plots,
+            colormap=colormap,
+            title=title,
+            line_width=line_width,
+            fontsize=fontsize,
+            show_sen=show_sen,
+            show_band=show_dispersion,
+            vlines=vlines,
+        )
     else:
-        # Default height scales with the number of panels (2 inches each), so
-        # the full four-panel figure stays 8x8 while smaller selections are not
-        # stretched vertically.
-        dimensions = [8, 2 * len(plots)]
-    plot_result(
-        result=result,
-        output=output,
-        dpi=dpi,
-        dimensions=dimensions,
-        east=area1[1],
-        north=area1[2],
-        temporal_type=temporal_type,
-        trend_fit=trend_fit,
-        trend_fit_segments=trend_fit_segments,
-        show_ols=show_ols,
-        show_sen=show_sen,
-        show_gam=False,
-        show_band=False,
-        show_stats=show_stats,
-        result2=result2,
-        trend_fit2=trend_fit2,
-        trend_fit_segments2=trend_fit_segments2,
-        strds_name=area1[3],
-        strds2_name=area2[3],
-        same_yscale=True,
-        line_color=line_color,
-        line_color2=line_color2,
-        fontsize=fontsize,
-        line_width=line_width,
-        title=title,
-        plots=plots,
-        band_lower=band_lower,
-        band_upper=band_upper,
-        band_lower2=band_lower2,
-        band_upper2=band_upper2,
-        band_label=band_label,
-        envelope_lower=envelope_lower,
-        envelope_upper=envelope_upper,
-        envelope_lower2=envelope_lower2,
-        envelope_upper2=envelope_upper2,
-        excluded=excluded,
-        excluded2=excluded2,
-        vlines=vlines,
-    )
+        if plot_dimensions:
+            dimensions = [float(x) for x in plot_dimensions.split(",")]
+        else:
+            # Default height scales with the number of panels (2 inches each),
+            # so the full four-panel figure stays 8x8 while smaller selections
+            # are not stretched vertically.
+            dimensions = [8, 2 * len(plots)]
+        plot_result(
+            categories=categories,
+            output=output,
+            dpi=dpi,
+            dimensions=dimensions,
+            temporal_type=temporal_type,
+            show_sen=show_sen,
+            show_band=show_dispersion,
+            line_width=line_width,
+            fontsize=fontsize,
+            title=title,
+            plots=plots,
+            colormap=colormap,
+            vlines=vlines,
+        )
+
+    if stats_output:
+        write_trend_stats_csv(categories, stats_output)
 
 
 if __name__ == "__main__":

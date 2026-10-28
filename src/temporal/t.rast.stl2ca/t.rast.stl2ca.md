@@ -1,26 +1,24 @@
 ## DESCRIPTION
 
-t.rast.stl2ca extracts two time series from two different areas using the same
-space-time raster dataset (STRDS). The timne series can be from a single
-user-selected point or as the mean, median or other statistic within a
-user-selected area. It then carries out a **STL decomposition** (Seasonal-Trend
-decomposition using LOESS) on each series and produces a multi-panel plot
-comparing the observed series, *trend*, *seasonal* and *residual* (remainder)
-components of the two areas side by side. Optionally, trend regressions
-(ordinary least-squares and/or robust Theil-Sen) can be fitted to the
-deseasonalized series of each area and drawn on the trend panel.
+t.rast.stl2ca extracts, for every **category** of a classification, the time
+series of a space-time raster dataset (STRDS), as the mean, median or other
+statistic of the pixels in that category. It then carries out a **STL
+decomposition** (Seasonal-Trend decomposition using LOESS) on each category's
+series and draws every category together on one multi-panel plot comparing
+the observed series, *trend*, *seasonal* and *residual* (remainder)
+components. Optionally, a robust Theil-Sen trend regression can be fitted to
+each category's deseasonalized series and drawn on the trend panel.
 
-t.rast.stl2ca complements *[t.rast.stl](t.rast.stl.md)*, which instead compares
-two *datasets* sampled at one area. Here there is always exactly one strds and
-always exactly two areas; use t.rast.stl if you want to compare two different
-space-time raster datasets at a single location instead.
+The categories come from either a CELL raster's own cell values (**raster**), or
+a vector map's features grouped by an attribute column
+(**map**/**layer**/**column**). This can, for example, be a land-cover raster,
+or a vector of administrative units grouped by region name. t.rast.stl2ca
+complements *[t.rast.stl](t.rast.stl.md)*, which can instead compare two
+*datasets* sampled at one, manually chosen area; use t.rast.stl for that case.
 
 The module supports strds with absolute (calendar-dated) or relative
-(integer-stepped) time. For a point (**coordinates**/**coordinates2**) it
-samples the pixel value at every registered timestep. For an area
-(**zone**/**raster**, or **zone2**/**raster2**) it takes the mean, median or
-other statistic of the pixels in the area. Both series are regularized onto the
-same evenly spaced time axis, and then run through
+(integer-stepped) time. Every category's series is regularized onto the same
+evenly spaced time axis, and then run through
 [statsmodels.tsa.seasonal.STL](https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html).
 
 ### About STL
@@ -47,90 +45,100 @@ handles long seasonal cycles, and (in its robust variant) can down-weight
 outliers such as undetected clouds.
 
 The module can be run with default settings to explore patterns. The minimum
-input is the strds and the two areas. If the maps in the strds are not
-regularly spaced, you will need to provide the required frequency as well. For
-more information about this parameter and other fine-tune options, see the next
-section.
+input is the strds and either **raster** or **map**. If the maps in the strds
+are not regularly spaced, you will need to provide the required frequency as
+well. For more information about this parameter and other fine-tune options,
+see the next section.
 
-### Sampling the two areas
+### The categories
 
-Each of the two areas is sampled either at a single point
-(**coordinates**/**coordinates2**) or pooled over an area, defined either by a
-vector map (**zone**/**zone2**) or a raster map (**raster**/**raster2**). Within
-one area, these three options are mutually exclusive; area 1
-(**coordinates**/**zone**/**raster**) and area 2
-(**coordinates2**/**zone2**/**raster2**) are independent of each other and can
-mix freely, for example a point against a zone.
+Each category is sampled as the mean, median or other statistic of the pixels
+that belong to it, in exactly one of two ways:
 
-A point is given with **coordinates=east,north** (or **coordinates2**) in the
-coordinate system of the current GRASS project. When the module dialog is
-launched from within the GRASS GUI, the coordinates field can also be filled by
-clicking a location in the map display (when launched from the terminal,
-clicking a location will not work).
+- **raster**: a CELL (integer) raster whose distinct cell values are the
+  category codes. There is no per-category breakdown beyond the raster's own
+  values. You need to reclassify it first with *[r.reclass](r.reclass.md)* if
+  you need a coarser grouping.
+- **map** (with **layer** and **column**): a vector map, rasterized and
+  grouped by an attribute column. Every feature becomes its own category by
+  default (**column=cat**, i.e. not set); giving a different **column**
+  groups features that share the same value of that column into one category
+  instead, labelled with that value. **column** can be numeric or text.
 
-**zone**/**zone2** is a vector map (points, lines or polygons) defining the
-sampling area. All of its features are rasterized and pooled into a single
-sample, so there is no per-feature breakdown. Use *[v.extract](v.extract.md)*
-beforehand to pre-select a subset of features if the map contains more than you
-want pooled together.
+**raster** and **map** are mutually exclusive; exactly one is required.
 
-**raster**/**raster2** is a raster map defining the sampling area: every
-*non-null* cell is pooled into a single sample, the raster counterpart of
-**zone**/**zone2**. The map can be of any type (CELL, FCELL or DCELL).
+By default every distinct category found is processed. **categories** restricts
+this to a chosen subset, given as a comma separated list of either the
+category's raw value (**raster**) or its label (the **column** value, or the
+raster's own category label if it has one). For example *categories=1,3* or
+*categories=forest,water*.
 
-Either way, the module samples the *current computational region*'s resolution.
-Set the region with *[g.region](g.region.md)* before running if needed. Each
-point, or at least part of each zone or raster, must fall inside the current
-region.
+Either way, the module samples at the *current computational region*'s
+resolution. Set the region with *[g.region](g.region.md)* before running if
+needed. A category with no overlap with the current region, or no non-null
+data at any registered timestep, is skipped with a warning rather than
+aborting the whole run.
 
-The per-timestep pixel values within an area are summarized by **statistic**:
-`mean` (the default), `median`, `min`, `max` or `percentile`. `percentile`
-requires **percentile_value** (0-100). This statistic applies to both areas
-alike, so the comparison stays like-for-like; it cannot be set independently per
-area. Note that `median` and `percentile` require t.rast.univar's
+The per-timestep pixel values within a category are summarized by
+**statistic**: `mean` (the default), `median`, `min`, `max` or `percentile`.
+`percentile` requires **percentile_value** (0-100). This statistic applies to
+every category alike, so they stay comparable; it cannot be set independently
+per category. Note that `median` and `percentile` require t.rast.univar's
 extended-statistics mode, which can require a lot of memory if used with large
 rasters.
 
-The **-d** flag additionally shades a band around the Observed series of
-whichever area(s) are defined by a zone or raster (not a point), showing the
-spread of pixel values at each timestep: ±1 standard deviation for `mean`, or
-the interquartile range (25th-75th percentile) for `median`. It is only valid
-with `statistic=mean` or `statistic=median`. Gaps in the band (missing
-timesteps, or dates excluded by **temporal_outliers**/**temporal_outliers2**)
-are always filled by linear interpolation, regardless of the **interpolation**
-option, so a curvature-fitting method chosen for the series itself cannot
-overshoot and bulge the band past its true local range.
+The **-d** flag additionally shades a band around each category's Observed
+series showing the spread of pixel values at each timestep: ±1 standard
+deviation for `mean`, or the interquartile range (25th-75th percentile) for
+`median`. It is only valid with `statistic=mean` or `statistic=median`. Gaps
+in the band (missing timesteps) are always filled by linear interpolation,
+regardless of the **interpolation** option, so a curvature-fitting method
+chosen for the series itself cannot overshoot and bulge the band past its true
+local range.
 
 A standard deviation or interquartile range estimated from very few pixels is
 unreliable and can spike far past the genuine spread, typically on a
-near-total-cloud timestep where only a handful of pixels survive -- while the
-mean/median itself still looks normal, since it is a much less noise-sensitive
-statistic, so **temporal_outliers**/**temporal_outliers2** will not catch it
-either. **min_pixels** guards against this: at timesteps with fewer non-null
-pixels than this, the band is left out there too and filled the same way as
-any other gap.
+near-total-cloud timestep where only a handful of pixels survive. **min_pixels**
+guards against this. At timesteps with fewer non-null pixels than this, the band
+is left out there too and filled the same way as any other gap.
 
-### Comparing the two areas
+### Drawing
 
-The full analysis (regularization, STL decomposition and trend regression) is
-always run on both areas, and the two are drawn together on the same four panels
-(Observed, Trend, Seasonal, Residual), sharing one common y-axis per panel --
-both series come from the same strds. The two series are distinguished by
-colour, with a single legend in the Observed panel naming each area: the
-zone/raster map name, or the point's "east,north" coordinates.
+Every category gets its own color, from **colormap** (a [Matplotlib
+colormap](https://matplotlib.org/stable/users/explain/colors/colormaps.html)
+name, default `tab10`), with one legend for the whole figure, placed below the
+bottom panel so it never sits on top of a line. Once there are more categories
+than the chosen colormap has distinct colors, a continuous colormap
+(`viridis`) is used instead, sampled evenly across its range (a warning names
+this when it happens). The dispersion band (**-d**), seasonal envelope
+(**seasonal_envelope**) and Theil-Sen trend line (**-s**) are each drawn in
+the category's own color.
 
-The trend regression lines requested with **-o** and **-s** are drawn on the
-Trend panel for both areas. Each area's regression lines use a colour family
-matching its series, while different line styles distinguish OLS (dashed)
-from Theil-Sen (dash-dot). The **-t** flag adds the slope/R² statistics to the
-legend. The full statistics for each area are always printed to the terminal
-regardless, prefixed with the area's label.
+### Interactive plot
 
-The series line colours can be set with **color** (area 1) and **color2**
-(area 2). Each accepts a standard GRASS colour name (such as `blue` or
-`aqua`), an `R:G:B` triplet with each component in 0-255 (such as `0:0:255`),
-a hex code (`#1f77b4`) or a `tab:` name. The trend regression lines for an
-area are drawn in a darker family derived from its series colour.
+The **-i** flag writes an interactive HTML plot (using
+[Plotly](https://plotly.com/python/), a separate Python package from
+Matplotlib) instead of a static image, with the same panels, colours and
+legend as the static figure. **output** must then end in `.html`; if
+**output** is left out, the plot is opened in a browser tab instead of
+being shown in a window. What it adds over the static figure:
+
+- Click a category's legend entry to highlight it. This will cause the other
+  category's lines, across every panel, to fade to a thin grey. You can continue
+  to click other entries to highlight several at once. Clicking a highlighted
+  entry again removes it from the highlight.
+- Dragging across any panel zooms into that time range. Double-click to reset
+  the zoom.
+- Hovering any panel shows the date and category's value at that
+  point, and draws a crosshair through every panel at that date.
+- A "Trend statistics" tab in the top-left corner opens a sidebar holding
+  the same table **stats_output** writes to a file (see below), whether or
+  not **stats_output** is actually given.
+
+**plots**, **-d**, **-s**, **seasonal_envelope**, **vlines**, **colormap**,
+**title**, **line_width** and **fontsize** all carry over unchanged.
+**backend**, **dpi**, **plot_dimensions** and **style** are Matplotlib-only and
+are ignored for the HTML plot with a warning.
 
 ### Absolute vs. relative time
 
@@ -140,9 +148,9 @@ the x-axis is labelled "Time step".
 
 ### Regularization
 
-STL requires an evenly spaced, gap-free series. Each series is therefore
-resampled onto a regular axis and any gaps are then filled in. Three options
-control this, applied the same way to both areas:
+STL requires an evenly spaced, gap-free series. Each category's series is
+therefore resampled onto a regular axis and any gaps are then filled in.
+Three options control this:
 
 **frequency** sets the spacing of the regular axis for absolute-time datasets.
 It is a [pandas offset
@@ -173,45 +181,11 @@ real sampling of your data. If these are not matching, your data will be
 resampled. For example, setting data that is actually 16-day composites to `D`
 (daily) will create many interpolated points and smoothen the data series.
 
-**temporal_outliers** (area 1) and **temporal_outliers2** (area 2) detect and
-exclude short-lived spikes and dips before the analysis, independently for
-each area. They take `threshold,window`, where **threshold** is the minimum
-deviation from the local median (in the data's own units, e.g., 0.3 NDVI
-units) and **window** defines the period used to detect the spike (calendar
-days for absolute-time data, time steps for relative-time data). An
-observation is excluded only if it deviates from the median of neighbouring
-observations by at least **threshold** and returns close to that level within
-**window**. Sustained changes are retained, as they may represent genuine
-environmental changes. Excluded observations are treated as missing and
-always filled by linear interpolation (regardless of **interpolation**, which
-still governs genuine gaps) before STL decomposition and trend regression: an
-excursion can span many steps, and a curvature-fitting method bridging a gap
-that wide can overshoot past either neighbour, undoing the whole point of
-excluding the outlier by replacing it with a different, possibly larger
-artefact. Excluded observations are shown as lighter-coloured markers in the
-Observed panel, unless **-e** is given, in which case the markers are left
-out and the Observed panel's y-axis autoscales to the gap-filled series
-alone, rather than being stretched to also fit the excluded values. The
-pixel-value spread band (**-d**) is blanked and linearly interpolated at the
-same timesteps, so it does not keep showing the raw spread at an excluded
-date either.
-
-This option helps identify potential data artefacts, such as cloud
-contamination or sensor errors, that STL's robust fitting (**-r**) and the
-Theil-Sen trend estimator (**-s**) may not adequately handle. **Use it with
-caution:** rapid changes can also be genuine, and removing observations can
-affect estimated trends and their statistical significance, particularly in
-short time series. Choose **threshold** and **window** based on the expected
-behaviour of the data, not to obtain a particular result. Always inspect the
-excluded observations, justify the chosen settings, and preferably compare
-results with and without filtering to avoid inadvertently introducing bias or
-*p-hacking*.
-
 ### Decomposition (STL)
 
 The decomposition wraps `statsmodels.tsa.seasonal.STL`, run with the same
-settings on both areas. Its most important parameter is **period**, which is
-tied to the regularized frequency (or, for relative-time data, the step /
+settings on every category. Its most important parameter is **period**, which
+is tied to the regularized frequency (or, for relative-time data, the step /
 granularity). It is the number of observations in one full seasonal cycle.
 For example 12 for monthly data, 23 for a 16-day composite series (≈ 365 /
 16), or 365 for daily data with an annual cycle. If **period** is not given it
@@ -257,12 +231,12 @@ distorting the fit.
 ### Seasonal amplitude envelope
 
 The **seasonal_envelope** option draws a rolling envelope of the seasonal
-component on the Seasonal panel, for each area: a moving window one seasonal
-**period** wide, centered on each point, tracks the local extremes of the
-seasonal cycle. It can be used to show a decrease or increase in the
-amplitude over time (for example, a vegetation index whose
+component on the Seasonal panel, for every category:
+a moving window one seasonal **period** wide, centered on each point, tracks
+the local extremes of the seasonal cycle. It can be used to show a decrease
+or increase in the amplitude over time (for example, a vegetation index whose
 greening/senescence amplitude strengthens or dampens across years), and to
-compare that change between the two areas.
+compare that change between categories.
 
 The value is the fraction trimmed off each end of the window before taking
 the envelope: `seasonal_envelope=0` uses the plain min/max of the window,
@@ -271,43 +245,33 @@ so that one unusually extreme cycle doesn't dominate the envelope. A window
 that doesn't fully fit (the first/last half-period of the series) is left
 as a gap rather than computed from a partial window.
 
-### Trend lines
+### Trend line and statistics
 
 Beyond the visual decomposition, the tool quantifies the long-term change in
-each area by fitting regressions to its **deseasonalized observed** series
-and drawing them on the trend panel. The deseasonalized series is `trend +
-residual` (equivalently `observed - seasonal`).
+each category by fitting a robust Theil-Sen regression (SciPy's
+[theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html))
+to its **deseasonalized observed** series (`trend + residual`, equivalently
+`observed - seasonal`), reported with its slope and a monotonic-trend
+*p*-value from Kendall's rank-correlation test (SciPy's
+[kendalltau](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kendalltau.html);
+note that this differs from a full Mann-Kendall test, which applies tie and
+variance corrections, so the reported *p*-values may differ slightly when the
+data contain ties).
 
-Two fits are available. The first is an ordinary least-squares (OLS) line,
-reported with its **slope** and **R²**. The second is a robust Theil-Sen line
-(SciPy's
-[theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html)),
-reported with its slope and a monotonic-trend *p*-value from Kendall's
-rank-correlation test (SciPy's
-[kendalltau](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kendalltau.html)).
-Note that this differs from a full Mann-Kendall test, which applies tie and
-variance corrections. The reported *p*-values may therefore differ slightly when
-the data contain ties.
+The **-s** flag draws the Theil-Sen line on the trend panel; **stats_output**
+writes its numbers (slope, Kendall's tau, p-value) to a CSV file, one row
+per category, regardless of **-s** -- see "Output" below.
 
-Which line(s) appear on the trend panel is controlled by flags: **-o** draws
-the OLS line and **-s** draws the Theil-Sen line, for both areas. The
-Theil-Sen slope with the non-parametric Kendall test is more resistant to
-outliers and does not assume normal residuals.
+The slopes are expressed per observation of the regularized series, i.e., per
+step of the chosen **frequency** (absolute series) or **step** (relative
+series). For a daily (D) series this is per day; for a 16-day composite (16D)
+it is per 16-day step, for a monthly (MS) series per month, and so on. Use
+**slope_unit** to express them per a different, readable calendar unit
+instead (day/week/month/year), or `auto` (the default) to pick one from the
+series span.
 
-The **-t** flag adds the trend-line statistics (slope, R², Mann-Kendall
-*p*-value) to the legend. The statistics are always printed to the terminal
-regardless of this flag.
-
-The slopes (OLS, Theil-Sen) are expressed per observation of the regularized
-series, i.e., per step of the chosen **frequency** (absolute series) or
-**step** (relative series). For a daily (D) series this is per day; for a
-16-day composite (16D) it is per 16-day step, for a monthly (MS) series per
-month, and so on. Use **slope_unit** to express them per a different,
-readable calendar unit instead (day/week/month/year), or `auto` (the default)
-to pick one from the series span.
-
-**A note on significance.** The reported *p*-values (both the OLS slope test and
-the Kendall test behind Theil-Sen) assume independent residuals. Deseasonalized
+**A note on significance.** The reported *p*-value (the Kendall test behind
+Theil-Sen) assumes independent residuals. Deseasonalized
 environmental series are almost always serially autocorrelated, which inflates
 significance (*p*-values come out too small). The values here therefore do
 **not** account for serial autocorrelation. So, for a formal inference, you
@@ -317,11 +281,10 @@ correction such as the Hamed–Rao modification of the Mann-Kendall test.
 The STL trend LOESS has to **extrapolate** at both ends of the series because,
 near the boundaries, it can only use data from one side. The corresponding ends
 of the deseasonalized series are therefore the least reliable and can
-disproportionately influence the fitted regressions. The **trend_trim** option
-reduces this edge effect by dropping a portion of each end before fitting. The
-same trim is applied to both fits (OLS and Theil-Sen) so they describe the
-same span. The trimming amount is specified as a fraction of the effective
-trend window:
+disproportionately influence the fitted regression. The **trend_trim** option
+reduces this edge effect by dropping a portion of each end before fitting.
+The trimming amount is specified as a fraction of the effective trend
+window:
 
 - `none` (default) uses the whole series;
 - `0.1` / `0.25` remove only the outermost, most biased points;
@@ -334,18 +297,19 @@ edge of the plot, increasing **trend_trim** is the appropriate fix.
 
 ### Trend breakpoints
 
-A single OLS/Theil-Sen slope over the whole series averages away a real
+A single Theil-Sen slope over the whole series averages away a real
 turning point, for example a rise, a decline, and a renewed rise. The
-**breakpoints** option splits the OLS/Theil-Sen fit of each area into
-separate segments instead: one or more dates (absolute-time) or time steps
-(relative-time), each starting a new segment, with the series' own start and
-end as the outer boundaries. Each segment is reported and drawn with its own
-slope/R², labelled by its date (or step) range. **trend_trim** still only
-trims the series' true start and end; an interior breakpoint is not a LOESS
-edge, so no trim is applied there. Combine **breakpoints** with matching
-**vlines** values to also mark them on the plot. A segment left with too few
-observations after trimming (fewer than 4) is rejected with an error naming
-it, rather than silently reporting a near-meaningless fit.
+**breakpoints** option splits the fit of each category into separate segments
+instead: one or more dates (absolute-time) or time steps (relative-time),
+each starting a new segment, with the series' own start and end as the outer
+boundaries. Each segment gets its own row in **stats_output**, labelled by
+its date (or step) range, and (with **-s**) its own Theil-Sen line on the
+plot. **trend_trim** still only trims the series' true
+start and end; an interior breakpoint is not a LOESS edge, so no trim is
+applied there. Combine **breakpoints** with matching **vlines** values to
+also mark them on the plot. A segment left with too few observations after
+trimming (fewer than 4) is rejected with an error naming it, rather than
+silently reporting a near-meaningless fit.
 
 ### Vertical reference lines
 
@@ -362,9 +326,11 @@ given with **vlines_labels**, in the same order and count as **vlines**
 
 By default the multi-panel plot is shown in an interactive window. If **output**
 is given, the plot is instead saved to that file and the image format is taken
-from the file extension (`.png`, `.pdf`, `.svg`, ...). Plot appearance is
-controlled by **dpi** (resolution, default 300) and **plot_dimensions**
-(width,height in inches). The **style** option applies a Matplotlib
+from the file extension (`.png`, `.pdf`, `.svg`, ...). See "Interactive plot"
+above for the **-i** flag, which writes an HTML plot instead and changes
+**output**'s meaning. The rest of this section is about the static image.
+Plot appearance is controlled by **dpi** (resolution, default 300) and
+**plot_dimensions** (width,height in inches). The **style** option applies a Matplotlib
 [style sheet](https://matplotlib.org/stable/gallery/style_sheets/style_sheets_reference.html)
 to the plot, e.g. *style=ggplot*. It also accepts the path to a custom
 [.mplstyle file](https://matplotlib.org/stable/tutorials/introductory/customizing.html#defining-your-own-style),
@@ -373,28 +339,47 @@ e.g. to set a thinner `axes.linewidth` than any built-in style does.
 The **plots** option selects which of the four panels (observed, trend,
 seasonal, residual) are drawn. By default all four are shown; list a subset to
 leave the others out, for example *plots=observed,trend* to draw only the
-observed series and its trend. At least one panel is required. The trend
-regression lines (**-o**, **-s**) are only drawn when the trend panel is
-included. When **plot_dimensions** is not set, the default figure height scales
-with the number of selected panels (about 2 inches each, so the full four-panel
-figure is 8x8 inches).
+observed series and its trend. At least one panel is required. The Theil-Sen
+trend line (**-s**) is only drawn when the trend panel is included. When
+**plot_dimensions** is not set, the default figure height scales with the
+number of selected panels (about 2 inches each, so the full four-panel figure
+is 8x8 inches).
 
 The **backend** option selects the matplotlib rendering backend. You rarely need
 it: `Agg` is chosen automatically when writing to a file, and `WXAgg` (an
 interactive window) when no output file is given. Override it only if your
 system needs a different interactive backend (e.g. `TkAgg`, `Qt5Agg`).
 
+**stats_output**, when given, writes the Theil-Sen/Kendall trend statistics
+(slope, tau, p-value, the reporting unit, number of observations fitted) to
+a CSV file, one row per category -- and one row per **breakpoints** segment,
+when given, in addition to the whole-series row. This is independent of
+**-s**: the statistics are computed either way, this option just decides
+whether they are written out. With **-i**, the same table is also always
+shown in the HTML output, in a sidebar opened from the "Trend statistics"
+tab -- see "Interactive plot" above -- whether or not **stats_output** is
+given.
+
 ### Subsetting and performance
 
 The **where** option accepts a temporal WHERE clause (as used by other `t.*`
 modules) to restrict the analysis to a subset of timestamps, for example a
-particular range of years.
+particular range of years. Note that in the interactive plot, you can plot the
+whole range and select the range you are interested in in the plot (see above).
 
-The **nprocs** option sets the number of parallel processes used during
-sampling: by *[t.rast.what](t.rast.what.md)* for a point
-(**coordinates**/**coordinates2**), or by *[t.rast.univar](t.rast.univar.md)*'s
-zonal extraction for an area (**zone**/**raster** or **zone2**/**raster2**),
-potentially making the module substantially faster to run.
+The **nprocs** option sets the number of parallel processes
+*[t.rast.univar](t.rast.univar.md)* uses for the zonal extraction, which
+covers every category in one call; this can make the module substantially
+faster to run, but setting it higher than the number of CPU cores available
+just adds contention rather than speed. The main per-run cost is
+*t.rast.univar* itself, which runs once per registered map in **strds**
+(filtered by **where**, if given): a strds with very many registered maps
+can take a while regardless of region size or category count, since the
+dominant cost is then the number of maps, not the number of pixels. The
+module automatically shrinks the region it samples at to the categories' own
+extent first (see "The categories" above), which helps substantially when
+the categories occupy only a small part of a much larger current region, but
+does not reduce the per-map cost of a strds with many registered maps.
 
 ## NOTES
 
@@ -406,25 +391,29 @@ pip install numpy pandas scipy matplotlib statsmodels
 ```
 
 If a dependency is missing the module exits with a message indicating which
-package to install.
+package to install. The **-i** (interactive HTML plot) flag additionally
+needs *plotly* (`pip install plotly`), checked only when **-i** is actually
+used -- an ordinary run never needs it installed.
 
 - **pandas** builds the time-indexed series, resamples it onto the regular axis
   (`Series.resample`) and fills gaps (`Series.interpolate`).
 - **statsmodels** performs the STL decomposition
   ([statsmodels.tsa.seasonal.STL](https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html)),
   splitting each series into trend, seasonal and residual components.
-- **scipy** fits the trend regressions: the OLS line
-  ([scipy.stats.linregress](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.linregress.html)),
-  the robust Theil-Sen line
-  ([scipy.stats.theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html)),
+- **scipy** fits the robust Theil-Sen trend line
+  ([scipy.stats.theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html))
   and the monotonic-trend *p*-value from Kendall's rank correlation
   ([scipy.stats.kendalltau](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kendalltau.html)).
 - **numpy** provides the array operations underlying the above, and
   **matplotlib** renders the multi-panel plot.
 
 Not every option of *[t.rast.stl](t.rast.stl.md)* is available here: there is
-no second strds (**strds2**), no monotone GAM trend curve (**-g**/**-b**/
-**gam_direction**), and no CSV (**csv**) or point vector (**vector**) output.
+no second strds (**strds2**), no OLS trend line on the plot (**-o**), no
+monotone GAM trend curve (**-g**/**-b**/**gam_direction**), no point-vector
+output (**vector**), and no transient temporal-outlier filter
+(**temporal_outliers**) -- all of these would need to be meaningful across an
+arbitrary number of categories rather than one or two fixed areas; some may
+return in a future version.
 
 ## EXAMPLES
 
@@ -433,7 +422,8 @@ TODO
 ## SEE ALSO
 
 *[t.rast.stl](t.rast.stl.md), [t.rast.line](t.rast.line.md),
-[t.rast.what](t.rast.what.md), [t.rast.univar](t.rast.univar.md)*
+[t.rast.univar](t.rast.univar.md), [v.to.rast](v.to.rast.md),
+[r.reclass](r.reclass.md)*
 
 ## REFERENCES
 
@@ -452,11 +442,16 @@ TODO
 - Local regression. (2026). In *Wikipedia*
   [Wikipedia local regression article](https://en.wikipedia.org/wiki/Local_regression).
 - Seabold, S., & Perktold, J. (2010). Statsmodels: Econometric and Statistical
-  Modeling with Python. SciPy 2010. https://doi.org/10.25080/Majora-92bf1922-011
+  Modeling with Python. SciPy 2010. <https://doi.org/10.25080/Majora-92bf1922-011>
 - statsmodels. (2025). *Statsmodels* (Version 0.14.6) [Python]
   [statsmodels repository](https://github.com/statsmodels/statsmodels/).
-- Virtanen, P., Gommers, R., Oliphant, T. E., Haberland, M., Reddy, T., Cournapeau, D., Burovski, E., Peterson, P., Weckesser, W., Bright, J., Van Der Walt, S. J., Brett, M., Wilson, J., Millman, K. J., Mayorov, N., Nelson, A. R. J., Jones, E., Kern, R., Larson, E., … Vázquez-Baeza, Y. (2020). SciPy 1.0: Fundamental algorithms for scientific computing in Python. Nature Methods, 17(3), 261–272. https://doi.org/10.1038/s41592-019-0686-2
-
+- Virtanen, P., Gommers, R., Oliphant, T. E., Haberland, M., Reddy, T.,
+  Cournapeau, D., Burovski, E., Peterson, P., Weckesser, W., Bright, J., Van
+  Der Walt, S. J., Brett, M., Wilson, J., Millman, K. J., Mayorov, N.,
+  Nelson, A. R. J., Jones, E., Kern, R., Larson, E., … Vázquez-Baeza, Y.
+  (2020). SciPy 1.0: Fundamental algorithms for scientific computing in
+  Python. Nature Methods, 17(3), 261–272.
+  <https://doi.org/10.1038/s41592-019-0686-2>
 
 ## AUTHOR
 

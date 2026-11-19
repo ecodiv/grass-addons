@@ -47,6 +47,20 @@ color of the outliers, set the color and width of the median line(s), set the
 color and transparency of the raster's median line and IQR band, and set the
 width of the boxplots.
 
+By default, the value axis (the y-axis, or the x-axis when the **-h** flag is
+set) is labeled with the name of the input raster. Use the **axis_label**
+option to set a custom title for this axis.
+
+Boxes can be colored two ways. The **-c** flag colors each box by its zone's
+own category color, taken from the zonal map's color table; it requires
+**zones**. The **-m** flag instead colors each box (or, without **zones**,
+the single box) using the color table of the *input value map*, looked up
+at that box's median -- useful when the value map already has a meaningful
+color ramp (e.g. elevation, NDVI) that you want the boxplot to match. The
+two are mutually exclusive. **-m** needs GRASS GIS 8.5 or later (it relies
+on *r.what.color*'s JSON output); on an older GRASS it is ignored, with a
+warning.
+
 ## NOTE
 
 The *r.boxplot* module operates on the raster array defined by the current

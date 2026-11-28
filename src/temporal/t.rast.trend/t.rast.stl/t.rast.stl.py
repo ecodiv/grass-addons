@@ -126,7 +126,7 @@
 # % key: max_gap
 # % type: integer
 # % label: Maximum gap length
-# % description: Longest run of consecutive missing steps on the regularized time axis that may be interpolated. A longer gap stops the module. Default is unset is no limit.
+# % description: Longest run of consecutive missing steps on the regularized time axis that may be interpolated. A longer gap stops the module. By default there is no limit.
 # % required: no
 # % guisection: Regularization
 # %end
@@ -560,7 +560,7 @@ if not callable(globals().get("_")):
 
 # plot.py, split out to reduce the size of the main script. trend.py,
 # series.py and plotstyle.py are shared with other tools in the
-# t.rast.trend bundle via the the trendlib library.
+# t.rast.trend bundle via the trendlib library.
 # Each library module leaves its own numpy / pandas / matplotlib /
 # statsmodels/scipy names as None at import time (set below, by
 # lazy_import_py_modules(), once GRASS has parsed the command line)
@@ -593,10 +593,10 @@ from trendlib.series import (  # noqa: E402
     validate_frequency,
 )
 from trendlib.trend import (  # noqa: E402
+    companion_csv_path,
     decompose_and_fit,
     gs_step,
     require_pymannkendall,
-    segment_csv_path,
     write_csv,
     write_point_vector,
     write_segments_csv,
@@ -960,9 +960,7 @@ def main(options, flags):
         elif index == 0:
             gs_step(_("Extracting the point time series..."))
         else:
-            gs_step(
-                _("Extracting the point time series for '{}'...").format(ds_name)
-            )
+            gs_step(_("Extracting the point time series for '{}'...").format(ds_name))
         ds_dates, ds_values, ds_lower, ds_upper, ds_pixel_counts = sample_strds(
             strds=ds_name,
             zone_raster=zone_raster,
@@ -1151,7 +1149,7 @@ def main(options, flags):
                 (ds_name, ds_result.trend.index, ds_segments)
                 for ds_name, (ds_result, _ds_fit, ds_segments) in zip(names, results)
             ],
-            segment_csv_path(csv),
+            companion_csv_path(csv, "_segment"),
         )
     if vector:
         write_point_vector(

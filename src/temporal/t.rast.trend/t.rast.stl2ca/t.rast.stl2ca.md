@@ -260,19 +260,15 @@ as a gap rather than computed from a partial window.
 
 ### Trend line and statistics
 
-The tool can quantify the long-term change by fitting regressions to the
-**deseasonalized observed** series and drawing them on the trend panel. The
-deseasonalized series is `trend + residual`, which is equivalent to
-`observed - seasonal`.
-
-Three fits are available. The first is an ordinary least-squares (OLS) line,
-reported with its **slope** and **R²**. The second is a robust Theil-Sen line
-(SciPy's
-[theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html)),
+The tool quantifies the long-term change in each category by fitting a robust
+Theil-Sen line (SciPy's
+[theilslopes](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html))
+to its **deseasonalized observed** series. The deseasonalized series is
+`trend + residual`, which is equivalent to `observed - seasonal`. The line is
 reported with its slope and a monotonic-trend *p*-value from Kendall's
 rank-correlation test (SciPy's
 [kendalltau](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kendalltau.html)).
-This option is more resistant to outliers and does not assume normal residuals.
+Theil-Sen is resistant to outliers and does not assume normal residuals.
 The **mk_test** option offers variants that correct for serial autocorrelation,
 computed with the [pymannkendall](https://github.com/mmhs013/pyMannKendall)
 package:
@@ -394,8 +390,8 @@ whole range and select the range you are interested in in the plot (see above).
 
 The **nprocs** option sets the number of parallel processes
 *[t.rast.univar](t.rast.univar.md)* uses for the zonal extraction, which covers
-every category in one call. Be careful not to set this higher than the number of CPU cores
-available.
+every category in one call. Be careful not to set this higher than the number of
+CPU cores available.
 
 The module automatically shrinks the region it samples at to the categories' own
 extent first (see "The categories" above), which mostly helps when the

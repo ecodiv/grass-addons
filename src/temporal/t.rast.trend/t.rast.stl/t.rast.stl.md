@@ -81,8 +81,8 @@ or the interquartile range (25th-75th percentile) for `median`. It is only valid
 with `statistic=mean` or `statistic=median`. Gaps in the band (missing
 timesteps, or dates excluded by **temporal_outliers**) are always filled by
 linear interpolation, regardless of the **interpolation** option, so a
-curvature-fitting method chosen for the series itself cannot overshoot, causing
-the band past to pass past the actual local range.
+curvature-fitting method chosen for the series itself cannot overshoot and push
+the band past the actual local range.
 
 A standard deviation or interquartile range estimated from very few pixels is
 unreliable and can spike far past the genuine spread, typically on a
@@ -373,12 +373,12 @@ point, such as a rise, a decline, or a renewed rise. The **breakpoints** option
 splits the OLS/Theil-Sen fit into separate segments instead: one or more dates
 (absolute-time) or time steps (relative-time), each starting a new segment, with
 the series' own start and end as the outer boundaries. Each segment is reported
-and drawn with its own slope/R²/*p*, labelled by its date (or step) range, and,
-with **csv** also given, these results are written to a companion CSV file (see
-**csv** below). The GAM curve (**-g**) is still fitted on the whole series.
-Combine **breakpoints** with matching **vlines** values to also mark them on the
-plot. A segment left with too few observations after trimming (fewer than 4) is
-rejected with an error naming it.
+with its date (or step) range and its own slope/R²/*p*, and drawn as a separate
+line, numbered in the plot legend. With **csv** also given, these results are
+written to a companion CSV file (see **csv** below). The GAM curve (**-g**) is
+still fitted on the whole series. Combine **breakpoints** with matching
+**vlines** values to also mark them on the plot. A segment left with too few
+observations after trimming (fewer than 4) is rejected with an error naming it.
 
 ### Vertical reference lines
 

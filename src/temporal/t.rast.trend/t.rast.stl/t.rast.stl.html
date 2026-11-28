@@ -99,8 +99,8 @@ the spread of pixel values at each timestep: ±1 standard deviation for
 <tt>statistic=median</tt>. Gaps in the band (missing timesteps, or dates
 excluded by <b>temporal_outliers</b>) are always filled by linear interpolation,
 regardless of the <b>interpolation</b> option, so a curvature-fitting method
-chosen for the series itself cannot overshoot, causing the band past to pass
-past the actual local range.
+chosen for the series itself cannot overshoot and push the band past the actual
+local range.
 
 <p>
 A standard deviation or interquartile range estimated from very few pixels is
@@ -438,12 +438,13 @@ point, such as a rise, a decline, or a renewed rise. The <b>breakpoints</b>
 option splits the OLS/Theil-Sen fit into separate segments instead: one or more
 dates (absolute-time) or time steps (relative-time), each starting a new
 segment, with the series' own start and end as the outer boundaries. Each
-segment is reported and drawn with its own slope/R²/<i>p</i>, labelled by its
-date (or step) range, and, with <b>csv</b> also given, these results are written
-to a companion CSV file (see <b>csv</b> below). The GAM curve (<b>-g</b>) is
-still fitted on the whole series. Combine <b>breakpoints</b> with matching
-<b>vlines</b> values to also mark them on the plot. A segment left with too few
-observations after trimming (fewer than 4) is rejected with an error naming it.
+segment is reported with its date (or step) range and its own
+slope/R²/<i>p</i>, and drawn as a separate line, numbered in the plot legend.
+With <b>csv</b> also given, these results are written to a companion CSV file
+(see <b>csv</b> below). The GAM curve (<b>-g</b>) is still fitted on the whole
+series. Combine <b>breakpoints</b> with matching <b>vlines</b> values to also
+mark them on the plot. A segment left with too few observations after trimming
+(fewer than 4) is rejected with an error naming it.
 
 <h3>Vertical reference lines</h3>
 

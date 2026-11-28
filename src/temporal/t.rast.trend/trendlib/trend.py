@@ -680,19 +680,18 @@ def trend_statistics(trend_fit):
     }
 
 
-def segment_csv_path(csv_path):
-    """The companion segment-statistics path for the 'csv' option.
+def companion_csv_path(csv_path, suffix):
+    """The path of a second CSV file written alongside the 'csv' option's.
 
-    Used so a single 'csv' option can name both output files: the per-date
-    components go to 'csv_path' itself, the per-segment trend statistics
-    (when 'breakpoints' is given) to this derived path alongside it.
+    Lets a single 'csv' option name both output files of a tool, e.g. the
+    per-date components and the per-segment trend statistics of t.rast.stl.
 
     :param str csv_path: the 'csv' option's value
-    :return str: csv_path with '_segment' appended before its extension,
-        e.g. 'out.csv' -> 'out_segment.csv'
+    :param str suffix: appended to the file name, before its extension
+    :return str: e.g. 'out.csv' with suffix '_segment' -> 'out_segment.csv'
     """
     stem, ext = os.path.splitext(csv_path)
-    return "{}_segment{}".format(stem, ext)
+    return "{}{}{}".format(stem, suffix, ext)
 
 
 def write_segments_csv(datasets, csv_path):
@@ -1400,14 +1399,10 @@ def decompose_and_fit(
                     ).format(pre=prefix, label=seg_label, n=n_seg, m=MIN_SEGMENT_OBS)
                 )
             trend_fit_segments.append((seg_fit, seg_label))
-            # A '---' divider opens every segment block (including the
-            # first, setting it apart from the whole-series messages above)
-            # and, after the loop, closes the last one too.
+            # Each segment block opens with a '---' divider, and one more
+            # after the loop closes the last; the date/step range is given
+            # once, in the block's header line.
             gs.message("---")
-            # The date/step range is reported once, in this header; the
-            # OLS/Theil-Sen lines below only add what differs per line (they
-            # used to repeat it too, making a run with several segments much
-            # longer to read than the numbers in it warranted).
             gs.message(
                 _("{pre}Trend segment {i}{label}:").format(
                     pre=prefix, i=seg_number, label=seg_label
@@ -1415,7 +1410,7 @@ def decompose_and_fit(
             )
             if show_ols:
                 gs.message(
-                    _("{pre}  OLS: slope={s}, R^2={r:.3f}, p={p:.3g}").format(
+                    _("{pre}OLS: slope={s}, R^2={r:.3f}, p={p:.3g}").format(
                         pre=prefix,
                         s=format_slope(seg_fit["slope_report"], unit_label),
                         r=seg_fit["r2"],
@@ -1424,7 +1419,7 @@ def decompose_and_fit(
                 )
             if show_sen:
                 gs.message(
-                    _("{pre}  Theil-Sen ({m}): slope={s}, tau={t:.3f}, p={p:.3g}").format(
+                    _("{pre}Theil-Sen ({m}): slope={s}, tau={t:.3f}, p={p:.3g}").format(
                         pre=prefix,
                         m=mk_name(mk_test),
                         s=format_slope(seg_fit["sen_slope_report"], unit_label),
@@ -1434,7 +1429,7 @@ def decompose_and_fit(
                 )
         gs.message("---")
 
-    # Whole-series fit: always computed, regardless of breakpoints_opt --
+    # Whole-series fit: always computed, regardless of breakpoints_opt.
     # write_point_vector() reports it unconditionally, and the
     # GAM curve (if requested) is only ever fit over the whole series.
     trend_fit = fit_trend(

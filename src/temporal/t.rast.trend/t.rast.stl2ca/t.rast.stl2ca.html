@@ -299,20 +299,15 @@ rather than computed from a partial window.
 
 <h3>Trend line and statistics</h3>
 
-The tool can quantify the long-term change by fitting regressions to the
-<b>deseasonalized observed</b> series and drawing them on the trend panel. The
-deseasonalized series is <tt>trend + residual</tt>, which is equivalent to
-<tt>observed - seasonal</tt>.
-
-<p>
-Three fits are available. The first is an ordinary least-squares (OLS) line,
-reported with its <b>slope</b> and <b>R²</b>. The second is a robust Theil-Sen
-line (SciPy's
-<a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html">theilslopes</a>),
-reported with its slope and a monotonic-trend <i>p</i>-value from Kendall's
-rank-correlation test (SciPy's
+The tool quantifies the long-term change in each category by fitting a robust
+Theil-Sen line (SciPy's
+<a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.theilslopes.html">theilslopes</a>)
+to its <b>deseasonalized observed</b> series. The deseasonalized series is
+<tt>trend + residual</tt>, which is equivalent to <tt>observed - seasonal</tt>.
+The line is reported with its slope and a monotonic-trend <i>p</i>-value from
+Kendall's rank-correlation test (SciPy's
 <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kendalltau.html">kendalltau</a>).
-This option is more resistant to outliers and does not assume normal residuals.
+Theil-Sen is resistant to outliers and does not assume normal residuals.
 The <b>mk_test</b> option offers variants that correct for serial
 autocorrelation, computed with the
 <a href="https://github.com/mmhs013/pyMannKendall">pymannkendall</a> package:
